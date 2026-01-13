@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amrita Attendance Supreme Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root { --primary: #2c3e50; --accent: #e74c3c; --bg: #f4f7f6; }
+        body { background: var(--bg); font-family: 'Inter', sans-serif; padding-bottom: 100px; }
+        .hidden { display: none !important; }
+        
+        /* Navbar & Dashboard */
+        .card { border: none; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .nav-tabs { border: none; margin-bottom: 20px; }
+        .nav-tabs .nav-link { color: #555; font-weight: 600; border: none; padding: 12px 25px; cursor: pointer; }
+        .nav-tabs .nav-link.active { color: var(--accent) !important; border-bottom: 3px solid var(--accent) !important; background: transparent !important; }
+
+        /* Timetable Grid Styling */
+        #timetableGrid th, #timetableGrid td { border: 1px solid #eee; text-align: center; vertical-align: middle; height: 110px; min-width: 140px; padding: 5px; }
+        .day-col { background: var(--primary) !important; color: white !important; font-weight: bold; width: 100px !important; }
+        .slot-box { background: #fff5f5; border-left: 5px solid var(--accent); padding: 10px; font-size: 0.85rem; height: 100%; display: flex; flex-direction: column; justify-content: center; transition: 0.3s; cursor: pointer; border-radius: 4px; }
+        .slot-box:hover { background: #ffebeb; transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .badge-id { font-size: 0.7rem; opacity: 0.6; margin-top: 5px; display: block; }
+
+        /* Modal Student Toggles */
+        .student-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+        .status-present { color: #27ae60; font-weight: bold; }
+        .status-absent { color: #c0392b; font-weight: bold; }
+        .session-item { cursor: pointer; border-radius: 8px; transition: 0.2s; }
+        .session-item:hover { background: #f8f9fa; border-left: 5px solid var(--primary); }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark shadow-sm mb-4">
+    <div class="container">
+        <a class="navbar-brand fw-bold" href="#">🎓 Attendance Supreme</a>
+        <div id="authArea">
+            <span id="roleLabel" class="badge bg-danger me-3 p-2"></span>
+            <button id="logoutBtn" class="btn btn-outline-light btn-sm hidden" onclick="logout()">Logout</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <!-- 1. LOGIN SECTION -->
+    <div id="loginSection" class="row justify-content-center">
+        <div class="col-md-4 card p-4 mt-5">
+            <h5 class="text-center mb-4">System Access</h5>
+            <input type="email" id="loginEmail" class="form-control mb-2" placeholder="Email (admin@am.amrita.edu)">
+            <input type="password" id="loginPass" class="form-control mb-3" placeholder="Password">
+            <button class="btn btn-danger w-100 fw-bold" onclick="login()">LOGIN</button>
+        </div>
+    </div>
+
+    <!-- 2. MAIN DASHBOARD -->
+    <div id="dashboard" class="hidden">
+        <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#viewTab" onclick="refreshAllData()">Schedule Grid</button></li>
+            <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#academicTab" onclick="refreshAllData()">Academic Setup</button></li>
+            <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#staffTab" onclick="refreshAllData()">Staff & Timetable</button></li>
+            <li class="nav-item faculty-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#facTab">Faculty Tools</button></li>
+        </ul>
+
+        <div class="tab-content">
+            <!-- TAB: TIMETABLE VIEW -->
+            <div class="tab-pane fade show active" id="viewTab">
+                <div class="card p-4">
+                    <div class="alert alert-dark py-2 small">💡 <b>Click any slot:</b> Admins view history | CRs mark attendance.</div>
+                    <div class="row g-2 mb-4">
+                        <div class="col-md-3"><select id="vDept" class="form-select dept-list"><option value="">Select Dept</option></select></div>
+                        <div class="col-md-3"><select id="vSec" class="form-select section-list"><option value="">Select Division</option></select></div>
+                        <div class="col-md-2"><input type="number" id="vSem" class="form-control" placeholder="Sem"></div>
+                        <div class="col-md-4"><button class="btn btn-primary w-100" onclick="renderGrid()">Generate Grid</button></div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="timetableGrid">
+                            <thead class="table-light"><tr id="hRow"></tr></thead>
+                            <tbody id="bRow"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: ACADEMIC SETUP -->
+            <div class="tab-pane fade" id="academicTab">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="card p-3 mb-3">
+                            <h6>Add Department/Batch/Section</h6>
+                            <input type="text" id="dName" class="form-control mb-2" placeholder="Dept Name">
+                            <input type="text" id="dCode" class="form-control mb-2" placeholder="Dept Code">
+                            <button class="btn btn-sm btn-success w-100 mb-3" onclick="createDept()">Save Dept</button>
+                            <hr>
+                            <select id="bDept" class="form-select mb-2 dept-list"></select>
+                            <input type="text" id="bName" class="form-control mb-2" placeholder="Batch Name">
+                            <input type="number" id="bYear" class="form-control mb-2" placeholder="Start Year">
+                            <button class="btn btn-sm btn-success w-100 mb-3" onclick="createBatch()">Save Batch</button>
+                            <hr>
+                            <select id="sBatch" class="form-select mb-2 batch-list"></select>
+                            <input type="text" id="sName" class="form-control mb-2" placeholder="Section (A/B)">
+                            <button class="btn btn-sm btn-success w-100" onclick="createSection()">Save Section</button>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="card p-3 mb-3">
+                            <h6>Student & Course Management</h6>
+                            <div class="row g-2 mb-3">
+                                <div class="col-6"><input type="text" id="stuRoll" class="form-control" placeholder="Roll No"></div>
+                                <div class="col-6"><input type="text" id="stuName" class="form-control" placeholder="Student Name"></div>
+                                <div class="col-12"><select id="stuSection" class="form-select section-list"></select></div>
+                                <div class="col-12"><button class="btn btn-primary w-100" onclick="createStudent()">Add Student</button></div>
+                            </div>
+                            <hr>
+                            <div class="row g-2 mb-2">
+                                <div class="col-4"><input type="text" id="cCode" class="form-control" placeholder="Course Code"></div>
+                                <div class="col-8"><input type="text" id="cName" class="form-control" placeholder="Course Name"></div>
+                                <div class="col-12"><select id="cDept" class="form-select dept-list"></select></div>
+                                <button class="btn btn-success" onclick="createCourse()">Add Course</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: STAFF & TIMETABLE -->
+            <div class="tab-pane fade" id="staffTab">
+                <div class="row">
+                    <div class="col-md-5">
+                        <div class="card p-3">
+                            <h6>Faculty Registration</h6>
+                            <input type="text" id="fName" class="form-control mb-2" placeholder="Name">
+                            <input type="email" id="fEmail" class="form-control mb-2" placeholder="Email">
+                            <input type="password" id="fPass" class="form-control mb-2" placeholder="Password">
+                            <input type="text" id="fTok" class="form-control mb-2" placeholder="6-Digit Token">
+                            <select id="fDept" class="form-select mb-2 dept-list"></select>
+                            <button class="btn btn-primary w-100" onclick="createFaculty()">Register Faculty</button>
+                        </div>
+                    </div>
+                    <div class="col-md-7">
+                        <div class="card p-3">
+                            <h6>Timetable Slot Assignment</h6>
+                            <div class="row g-2">
+                                <div class="col-6"><select id="ttSec" class="form-select section-list"></select></div>
+                                <div class="col-6"><input type="number" id="ttSem" class="form-control" placeholder="Sem"></div>
+                                <div class="col-4"><select id="ttDay" class="form-select"><option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option><option>Fri</option></select></div>
+                                <div class="col-4"><input type="number" id="ttSlot" class="form-control" placeholder="Slot (1-9)"></div>
+                                <div class="col-4"><select id="ttCourse" class="form-select course-list"></select></div>
+                                <div class="col-12"><select id="ttFac" class="form-select faculty-list"></select></div>
+                                <button class="btn btn-danger w-100 mt-2" onclick="createSlot()">Assign Slot</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: FACULTY TOOLS -->
+            <div class="tab-pane fade" id="facTab">
+                <div class="card p-4">
+                    <h5>Faculty Attendance Verification</h5>
+                    <input type="number" id="vSessId" class="form-control mb-2" placeholder="Session ID provided by CR">
+                    <input type="text" id="vToken" class="form-control mb-2" placeholder="Your 6-Digit Token">
+                    <button class="btn btn-success w-100" onclick="verify()">VERIFY & LOCK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: CR MARKING -->
+<div class="modal fade" id="markingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="markingModalTitle">Mark Attendance</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between mb-3">
+                    <span id="markingModalInfo" class="fw-bold"></span>
+                    <input type="date" id="markingDate" class="form-control w-25">
+                </div>
+                <div id="markingStudentList" class="table-responsive"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" onclick="submitAttendance()">Submit Attendance</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: ADMIN VIEW HISTORY -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title">Attendance Log</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body row">
+                <div class="col-md-4 border-end">
+                    <h6>Sessions (Click a date)</h6>
+                    <div id="sessionLog" class="list-group"></div>
+                </div>
+                <div class="col-md-8">
+                    <h6>Student Status List</h6>
+                    <div id="recordLog" class="table-responsive"><p class="text-muted">Select a date on the left.</p></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const API = "http://localhost:3000/api";
+    let activeTTId = null;
+
+    async function req(url, method = 'GET', body = null) {
+        const h = { 'Content-Type': 'application/json' };
+        if (localStorage.getItem('token')) h['Authorization'] = `Bearer ${localStorage.getItem('token')}`;
+        const res = await fetch(`${API}${url}`, { method, headers: h, body: body ? JSON.stringify(body) : null });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error); throw data; }
+        return data;
+    }
+
+    // AUTH
+    async function login() {
+        const d = await req('/login', 'POST', { email: loginEmail.value, password: loginPass.value });
+        localStorage.setItem('token', d.token); localStorage.setItem('role', d.role); location.reload();
+    }
+    function logout() { localStorage.clear(); location.reload(); }
+
+    // DATA LOADING
+    async function refreshAllData() {
+        try {
+            const [depts, batches, sections, courses, facs] = await Promise.all([
+                req('/admin/depts'), req('/admin/batches'), req('/admin/sections'), req('/admin/courses'), req('/admin/faculty')
+            ]);
+            fillSelect('.dept-list', depts, 'id', 'dept_code');
+            fillSelect('.batch-list', batches, 'id', 'batch_name');
+            fillSelect('.section-list', sections.map(s => ({id: s.id, name: `${s.batch_name} - ${s.section_name}`})), 'id', 'name');
+            fillSelect('.course-list', courses, 'course_code', 'course_name');
+            fillSelect('.faculty-list', facs, 'id', 'faculty_name');
+        } catch (e) {}
+    }
+
+    function fillSelect(cls, data, val, txt) {
+        document.querySelectorAll(cls).forEach(sel => {
+            const cur = sel.value;
+            sel.innerHTML = `<option value="">Select...</option>` + data.map(i => `<option value="${i[val]}">${i[txt]}</option>`).join('');
+            sel.value = cur;
+        });
+    }
+
+    // GRID RENDERING
+    async function renderGrid() {
+        const role = localStorage.getItem('role');
+        const deptText = vDept.selectedOptions[0].text;
+        const sectionRaw = vSec.selectedOptions[0].text;
+        const data = await req(`/common/timetable-by-class?dept_code=${deptText}&section_name=${sectionRaw.split(' - ')[1]}&semester=${vSem.value}`);
+        
+        hRow.innerHTML = '<th class="day-col">Day</th>' + [1,2,3,4,5,6,7,8,9].map(i => `<th>Slot ${i}</th>`).join('');
+        bRow.innerHTML = ['Mon','Tue','Wed','Thu','Fri'].map(day => {
+            let cols = `<td class="day-col">${day}</td>`;
+            for(let i=1; i<=9; i++){
+                const s = data.find(x => x.day === day && x.slot_number === i);
+                if(s) {
+                    let clickFn = role === 'admin' ? `onclick="openHistoryModal(${s.id})"` : (role === 'cr' ? `onclick="openMarkingModal(${s.id}, '${s.course_name}')"` : '');
+                    cols += `<td><div class="slot-box" ${clickFn}><b>${s.course_code}</b><br>${s.faculty_name}<br><span class="badge-id">ID: ${s.id}</span></div></td>`;
+                } else {
+                    cols += `<td>-</td>`;
+                }
+            }
+            return `<tr>${cols}</tr>`;
+        }).join('');
+    }
+
+    // ADMIN HISTORY MODAL
+    async function openHistoryModal(ttId) {
+        const sessions = await req(`/admin/sessions-by-timetable/${ttId}`);
+        sessionLog.innerHTML = sessions.map(s => `
+            <div class="session-item p-3 border mb-2" onclick="fetchHistoryDetails(${s.id})">
+                <b>${new Date(s.session_date).toLocaleDateString()}</b> <br>
+                <small>${s.is_verified_by_faculty ? '✅ Verified' : '⏳ Unverified'}</small>
+            </div>
+        `).join('');
+        recordLog.innerHTML = '<p class="text-muted">Select a session on the left.</p>';
+        new bootstrap.Modal(document.getElementById('historyModal')).show();
+    }
+
+    async function fetchHistoryDetails(sessId) {
+        const records = await req(`/admin/records-by-session/${sessId}`);
+        recordLog.innerHTML = `
+            <table class="table table-striped">
+                <thead class="table-dark"><tr><th>Roll</th><th>Name</th><th>Status</th></tr></thead>
+                <tbody>${records.map(r => `<tr><td>${r.roll_number}</td><td>${r.full_name}</td><td class="${r.status === 'present' ? 'text-success' : 'text-danger'} fw-bold">${r.status.toUpperCase()}</td></tr>`).join('')}</tbody>
+            </table>
+        `;
+    }
+
+    // CR MARKING MODAL
+    async function openMarkingModal(ttId, course) {
+        activeTTId = ttId;
+        markingModalTitle.innerText = `Attendance: ${course}`;
+        markingDate.valueAsDate = new Date();
+        const students = await req(`/cr/students-by-timetable/${ttId}`);
+        markingStudentList.innerHTML = `
+            <table class="table">
+                <thead><tr><th>Roll</th><th>Name</th><th>Toggle</th></tr></thead>
+                <tbody>${students.map(s => `<tr><td>${s.roll_number}</td><td>${s.full_name}</td><td><div class="form-check form-switch"><input class="form-check-input stu-toggle" type="checkbox" checked data-id="${s.id}"></div></td></tr>`).join('')}</tbody>
+            </table>
+        `;
+        new bootstrap.Modal(document.getElementById('markingModal')).show();
+    }
+
+    async function submitAttendance() {
+        const records = Array.from(document.querySelectorAll('.stu-toggle')).map(i => ({ id: i.dataset.id, status: i.checked ? 'present' : 'absent' }));
+        const res = await req('/cr/attendance', 'POST', { timetable_id: activeTTId, date: markingDate.value, records });
+        alert(`Submitted! Session ID: ${res.sessionId}`);
+        bootstrap.Modal.getInstance(document.getElementById('markingModal')).hide();
+    }
+
+    // CREATE OPERATIONS
+    async function createDept() { await req('/admin/depts', 'POST', { name: dName.value, code: dCode.value }); refreshAllData(); }
+    async function createBatch() { await req('/admin/batches', 'POST', { dept_id: bDept.value, start_year: bYear.value, end_year: 0, batch_name: bName.value }); refreshAllData(); }
+    async function createSection() { await req('/admin/sections', 'POST', { batch_id: sBatch.value, section_name: sName.value }); refreshAllData(); }
+    async function createCourse() { await req('/admin/courses', 'POST', { code: cCode.value, name: cName.value, credits: 4, dept_id: cDept.value }); refreshAllData(); }
+    async function createStudent() { await req('/admin/students', 'POST', { roll: stuRoll.value, name: stuName.value, email: "s@am.edu", section_id: stuSection.value }); alert("Saved"); }
+    async function createFaculty() { await req('/admin/faculty', 'POST', { email: fEmail.value, password: fPass.value, name: fName.value, dept_id: fDept.value, auth_key: fTok.value }); refreshAllData(); }
+    async function createSlot() { await req('/admin/timetable', 'POST', { section_id: ttSec.value, semester: ttSem.value, day: ttDay.value, slot: ttSlot.value, course_code: ttCourse.value, faculty_id: ttFac.value, room: "N/A" }); alert("Slot Assigned"); }
+    async function verify() { await req(`/faculty/verify/${vSessId.value}`, 'PUT', { token: vToken.value }); alert("Verified!"); }
+
+    window.onload = () => {
+        const r = localStorage.getItem('role');
+        if (r) {
+            loginSection.classList.add('hidden'); dashboard.classList.remove('hidden'); logoutBtn.classList.remove('hidden');
+            roleLabel.innerText = r.toUpperCase();
+            if(r !== 'admin') document.querySelectorAll('.admin-only').forEach(e => e.remove());
+            if(r !== 'faculty') document.querySelectorAll('.faculty-only').forEach(e => e.remove());
+            refreshAllData();
+        }
+    };
+</script>
+</body>
+</html>

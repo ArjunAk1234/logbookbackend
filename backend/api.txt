@@ -1,0 +1,690 @@
+1️⃣ Login
+
+POST /api/login
+
+Request
+{
+  "email": "admin@gmail.com",
+  "password": "123456"
+}
+
+Response
+{
+  "token": "JWT_TOKEN",
+  "role": "admin"
+}
+
+👑 ADMIN — DEPARTMENTS
+2️⃣ Create Department
+
+POST /api/admin/depts
+
+Request
+{
+  "name": "Computer Science",
+  "code": "CSE"
+}
+
+Response
+{
+  "id": 1,
+  "dept_name": "Computer Science",
+  "dept_code": "CSE"
+}
+
+3️⃣ Get Departments
+
+GET /api/admin/depts
+
+Response
+[
+  {
+    "id": 1,
+    "dept_name": "Computer Science",
+    "dept_code": "CSE"
+  }
+]
+
+4️⃣ Update Department
+
+PUT /api/admin/depts/1
+
+Request
+{
+  "name": "CSE",
+  "code": "CS"
+}
+
+Response
+{
+  "message": "Department Updated"
+}
+
+5️⃣ Delete Department
+
+DELETE /api/admin/depts/1
+
+Response
+{
+  "message": "Department Deleted"
+}
+
+👑 ADMIN — BATCHES
+6️⃣ Create Batch
+
+POST /api/admin/batches
+
+Request
+{
+  "dept_id": 1,
+  "start_year": 2022,
+  "end_year": 2026,
+  "batch_name": "2022-26"
+}
+
+Response
+{
+  "id": 1,
+  "dept_id": 1,
+  "start_year": 2022,
+  "end_year": 2026,
+  "batch_name": "2022-26"
+}
+
+7️⃣ Get Batches
+
+GET /api/admin/batches
+
+Response
+[
+  {
+    "id": 1,
+    "dept_id": 1,
+    "dept_code": "CSE",
+    "start_year": 2022,
+    "end_year": 2026,
+    "batch_name": "2022-26"
+  }
+]
+
+8️⃣ Update Batch
+
+PUT /api/admin/batches/1
+
+Request
+{
+  "start_year": 2023,
+  "end_year": 2027,
+  "batch_name": "2023-27"
+}
+
+Response
+{
+  "message": "Batch Updated"
+}
+
+9️⃣ Delete Batch
+
+DELETE /api/admin/batches/1
+
+Response
+{
+  "message": "Batch Deleted"
+}
+
+👑 ADMIN — SECTIONS
+🔟 Create Section
+
+POST /api/admin/sections
+
+Request
+{
+  "batch_id": 1,
+  "section_name": "A"
+}
+
+Response
+{
+  "id": 1,
+  "batch_id": 1,
+  "section_name": "A"
+}
+
+1️⃣1️⃣ Get Sections
+
+GET /api/admin/sections
+
+Response
+[
+  {
+    "id": 1,
+    "batch_id": 1,
+    "batch_name": "2022-26",
+    "section_name": "A"
+  }
+]
+
+1️⃣2️⃣ Update Section
+
+PUT /api/admin/sections/1
+
+Request
+{
+  "section_name": "B"
+}
+
+Response
+{
+  "message": "Section Updated"
+}
+
+1️⃣3️⃣ Delete Section
+
+DELETE /api/admin/sections/1
+
+Response
+{
+  "message": "Section Deleted"
+}
+
+👑 ADMIN — FACULTY
+1️⃣4️⃣ Create Faculty
+
+POST /api/admin/faculty
+
+Request
+{
+  "email": "sir@gmail.com",
+  "password": "123456",
+  "name": "Dr Kumar",
+  "dept_id": 1,
+  "auth_key": "123456"
+}
+
+Response
+{
+  "message": "Faculty Created"
+}
+
+1️⃣5️⃣ Get Faculty
+
+GET /api/admin/faculty
+
+Response
+[
+  {
+    "id": 10,
+    "faculty_name": "Dr Kumar",
+    "email": "sir@gmail.com",
+    "dept_code": "CSE",
+    "authorization_key": "123456"
+  }
+]
+
+1️⃣6️⃣ Update Faculty
+
+PUT /api/admin/faculty/10
+
+Request
+{
+  "name": "Dr Raj",
+  "auth_key": "654321",
+  "dept_id": 1
+}
+
+Response
+{
+  "message": "Faculty Profile Updated"
+}
+
+1️⃣7️⃣ Delete Faculty
+
+DELETE /api/admin/faculty/10
+
+Response
+{
+  "message": "Faculty Deleted"
+}
+
+👑 ADMIN — STUDENTS
+1️⃣8️⃣ Create Student
+
+POST /api/admin/students
+
+Request
+{
+  "roll": "CSE01",
+  "name": "Arjun",
+  "email": "arjun@gmail.com",
+  "section_id": 1
+}
+
+Response
+{
+  "message": "Student Added"
+}
+
+1️⃣9️⃣ Get Students
+
+GET /api/admin/students
+
+Response
+[
+  {
+    "id": 1,
+    "roll_number": "CSE01",
+    "full_name": "Arjun",
+    "email": "arjun@gmail.com",
+    "section_id": 1,
+    "section_name": "A"
+  }
+]
+
+2️⃣0️⃣ Update Student
+
+PUT /api/admin/students/1
+
+Request
+{
+  "roll": "CSE02",
+  "name": "Arjun K",
+  "email": "arjun@gmail.com",
+  "section_id": 1
+}
+
+Response
+{
+  "message": "Student Updated"
+}
+
+2️⃣1️⃣ Delete Student
+
+DELETE /api/admin/students/1
+
+Response
+{
+  "message": "Student Deleted"
+}
+
+2️⃣2️⃣ Promote to CR
+
+POST /api/admin/promote-cr
+
+Request
+{
+  "student_id": 1,
+  "password": "123456"
+}
+
+Response
+{
+  "message": "Promoted to CR"
+}
+
+👑 ADMIN — COURSES
+2️⃣3️⃣ Create Course
+
+POST /api/admin/courses
+
+Request
+{
+  "code": "CS301",
+  "name": "DBMS",
+  "credits": 4,
+  "dept_id": 1
+}
+
+Response
+{
+  "message": "Course Created"
+}
+
+2️⃣4️⃣ Get Courses
+
+GET /api/admin/courses
+
+Response
+[
+  {
+    "course_code": "CS301",
+    "course_name": "DBMS",
+    "credits": 4,
+    "dept_id": 1
+  }
+]
+
+2️⃣5️⃣ Update Course
+
+PUT /api/admin/courses/CS301
+
+Request
+{
+  "name": "Advanced DBMS",
+  "credits": 5
+}
+
+Response
+{
+  "message": "Course Updated"
+}
+
+2️⃣6️⃣ Delete Course
+
+DELETE /api/admin/courses/CS301
+
+Response
+{
+  "message": "Course Deleted"
+}
+
+👑 ADMIN — TIMETABLE
+2️⃣7️⃣ Add Slot
+
+POST /api/admin/timetable
+
+Request
+{
+  "section_id": 1,
+  "semester": 5,
+  "day": "Mon",
+  "slot": 1,
+  "course_code": "CS301",
+  "faculty_id": 10,
+  "room": "B201"
+}
+
+Response
+{
+  "message": "Slot Added"
+}
+
+2️⃣8️⃣ Update Slot
+
+PUT /api/admin/timetable/5
+
+Request
+{
+  "day": "Tue",
+  "slot": 2,
+  "course_code": "CS301",
+  "faculty_id": 10,
+  "room": "B202"
+}
+
+Response
+{
+  "message": "Slot Updated"
+}
+
+2️⃣9️⃣ Delete Slot
+
+DELETE /api/admin/timetable/5
+
+Response
+{
+  "message": "Slot Deleted"
+}
+
+3️⃣0️⃣ Admin: Sessions by Timetable
+
+GET /api/admin/sessions-by-timetable/5
+
+Response
+[
+  {
+    "id": 100,
+    "session_date": "2026-01-10",
+    "is_verified_by_faculty": false,
+    "marked_by": "cr@gmail.com"
+  }
+]
+
+3️⃣1️⃣ Admin: Records by Session
+
+GET /api/admin/records-by-session/100
+
+Response
+[
+  {
+    "roll_number": "CSE01",
+    "full_name": "Arjun",
+    "status": "P"
+  }
+]
+
+👨‍🏫 FACULTY
+3️⃣2️⃣ Regenerate Token
+
+PUT /api/faculty/regen-token
+
+Response
+{
+  "message": "New Token Generated",
+  "token": "654321"
+}
+
+3️⃣3️⃣ Verify Attendance
+
+PUT /api/faculty/verify/100
+
+Request
+{
+  "token": "654321"
+}
+
+Response
+{
+  "message": "Attendance verified and locked"
+}
+
+🧑‍🎓 CR
+3️⃣4️⃣ My Courses
+
+GET /api/cr/my-courses
+
+Response
+[
+  {
+    "course_code": "CS301",
+    "course_name": "DBMS"
+  }
+]
+
+3️⃣5️⃣ Students by Timetable
+
+GET /api/cr/students-by-timetable/5
+
+Response
+[
+  {
+    "id": 1,
+    "roll_number": "CSE01",
+    "full_name": "Arjun"
+  }
+]
+
+3️⃣6️⃣ Mark Attendance
+
+POST /api/cr/attendance
+
+Request
+{
+  "timetable_id": 5,
+  "date": "2026-01-13",
+  "selected_course_code": "CS301",
+  "is_free": false,
+  "records": [
+    { "id": 1, "status": "P" },
+    { "id": 2, "status": "A" }
+  ]
+}
+
+Response
+{
+  "message": "Attendance processed",
+  "sessionId": 200,
+  "category": "normal"
+}
+
+
+3️⃣7️⃣ Get Timetable (By Section + Semester)
+
+GET
+
+/api/common/timetable?section_id=1&semester=5
+
+Headers
+Authorization: Bearer JWT_TOKEN
+
+✅ Sample Response
+[
+  {
+    "id": 10,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 1,
+    "course_code": "CS301",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Database Management Systems",
+    "faculty_name": "Dr Kumar"
+  },
+  {
+    "id": 11,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 2,
+    "course_code": "CS302",
+    "faculty_user_id": 15,
+    "room_info": "B202",
+    "course_name": "Operating Systems",
+    "faculty_name": "Dr Raj"
+  },
+  {
+    "id": 12,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Tue",
+    "slot_number": 1,
+    "course_code": "CS303",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Computer Networks",
+    "faculty_name": "Dr Kumar"
+  }
+]
+
+3️⃣8️⃣ Week Grid (Shows attendance status overlay)
+
+GET
+
+/api/common/week-grid?section_id=1&start_date=2026-01-12
+
+
+(start_date must be Monday)
+
+Headers
+Authorization: Bearer JWT_TOKEN
+
+✅ Sample Response
+[
+  {
+    "id": 10,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 1,
+    "course_code": "CS301",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Database Management Systems",
+    "faculty_name": "Dr Kumar",
+    "session_category": "normal",
+    "session_id": 101
+  },
+  {
+    "id": 11,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 2,
+    "course_code": "CS302",
+    "faculty_user_id": 15,
+    "room_info": "B202",
+    "course_name": "Operating Systems",
+    "faculty_name": "Dr Raj",
+    "session_category": null,
+    "session_id": null
+  },
+  {
+    "id": 12,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Tue",
+    "slot_number": 1,
+    "course_code": "CS303",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Computer Networks",
+    "faculty_name": "Dr Kumar",
+    "session_category": "free",
+    "session_id": 102
+  }
+]
+
+📌 Meaning of session_category
+Value	Meaning
+null	Not yet marked
+normal	Regular class
+swap	Swapped subject
+free	Free hour
+3️⃣9️⃣ Timetable By Class (Public View)
+
+GET
+
+/api/common/timetable-by-class?dept_code=CSE&section_name=A&semester=5
+
+Headers
+Authorization: Bearer JWT_TOKEN
+
+✅ Sample Response
+[
+  {
+    "id": 10,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 1,
+    "course_code": "CS301",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Database Management Systems",
+    "faculty_name": "Dr Kumar"
+  },
+  {
+    "id": 11,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Mon",
+    "slot_number": 2,
+    "course_code": "CS302",
+    "faculty_user_id": 15,
+    "room_info": "B202",
+    "course_name": "Operating Systems",
+    "faculty_name": "Dr Raj"
+  },
+  {
+    "id": 12,
+    "section_id": 1,
+    "semester": 5,
+    "day": "Tue",
+    "slot_number": 1,
+    "course_code": "CS303",
+    "faculty_user_id": 12,
+    "room_info": "B201",
+    "course_name": "Computer Networks",
+    "faculty_name": "Dr Kumar"
+  }
+]

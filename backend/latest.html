@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supreme Attendance Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root { --primary: #2c3e50; --accent: #e74c3c; --normal: #2ecc71; --swap: #f1c40f; --free: #e67e22; }
+        body { background: #f4f7f6; font-family: 'Inter', sans-serif; padding-bottom: 50px; }
+        .hidden { display: none !important; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .nav-tabs .nav-link { color: #555; font-weight: 600; border: none; padding: 12px 25px; cursor: pointer; }
+        .nav-tabs .nav-link.active { color: var(--accent) !important; border-bottom: 3px solid var(--accent) !important; background: transparent !important; }
+
+        /* Timetable Grid & Colors */
+        #timetableGrid th, #timetableGrid td { border: 1px solid #eee; text-align: center; vertical-align: middle; height: 110px; min-width: 140px; padding: 5px; }
+        .day-col { background: var(--primary) !important; color: white !important; font-weight: bold; width: 120px !important; }
+        .date-sub { font-size: 0.7rem; display: block; opacity: 0.7; font-weight: normal; }
+        
+        .slot-box { background: white; border: 1px solid #ddd; padding: 10px; font-size: 0.8rem; height: 100%; display: flex; flex-direction: column; justify-content: center; transition: 0.3s; cursor: pointer; border-radius: 8px; }
+        .slot-box:hover { transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        
+        /* Grid Cell Status Colors */
+        .cat-normal { background: #d4edda !important; border-left: 5px solid var(--normal); }
+        .cat-swap { background: #fff3cd !important; border-left: 5px solid var(--swap); }
+        .cat-free { background: #fbeee6 !important; border-left: 5px solid var(--free); }
+        
+        .status-absent { color: #c0392b; font-weight: bold; }
+        .status-present { color: #27ae60; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark shadow-sm mb-4">
+    <div class="container">
+        <a class="navbar-brand fw-bold">🎓 Amrita Attendance</a>
+        <div id="authArea">
+            <span id="roleLabel" class="badge bg-danger me-3 p-2"></span>
+            <button id="logoutBtn" class="btn btn-outline-light btn-sm hidden" onclick="logout()">Logout</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <!-- 1. LOGIN -->
+    <div id="loginSection" class="row justify-content-center">
+        <div class="col-md-4 card p-4 mt-5">
+            <h5 class="text-center mb-3">Sign In</h5>
+            <input type="email" id="loginEmail" class="form-control mb-2" placeholder="Email">
+            <input type="password" id="loginPass" class="form-control mb-3" placeholder="Password">
+            <button class="btn btn-danger w-100 fw-bold" onclick="login()">LOGIN</button>
+        </div>
+    </div>
+
+    <!-- 2. DASHBOARD -->
+    <div id="dashboard" class="hidden">
+        <ul class="nav nav-tabs" id="myTab">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#viewTab" onclick="renderGrid()">Grid View</button></li>
+            <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#academicTab" onclick="refreshAllData()">Academic Setup</button></li>
+            <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#staffTab" onclick="refreshAllData()">Assignments</button></li>
+            <li class="nav-item faculty-only"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#facTab">Verify</button></li>
+        </ul>
+
+        <div class="tab-content pt-2">
+            <!-- TAB: GRID -->
+            <div class="tab-pane fade show active" id="viewTab">
+                <div class="card p-4">
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4"><select id="vSec" class="form-select section-list" onchange="renderGrid()"></select></div>
+                        <div class="col-md-4"><input type="date" id="vWeekDate" class="form-control" onchange="renderGrid()"></div>
+                        <div class="col-md-4 d-flex align-items-center gap-2">
+                            <span class="badge bg-success">Normal</span> <span class="badge bg-warning text-dark">Swap</span> <span class="badge bg-danger">Free</span>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered" id="timetableGrid">
+                            <thead class="table-light"><tr id="hRow"></tr></thead>
+                            <tbody id="bRow"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: ACADEMIC -->
+            <div class="tab-pane fade" id="academicTab">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="card p-3 mb-2">
+                            <h6>Org Setup</h6>
+                            <input type="text" id="dName" class="form-control mb-1" placeholder="Dept Name">
+                            <input type="text" id="dCode" class="form-control mb-1" placeholder="Code">
+                            <button class="btn btn-sm btn-success mb-2 w-100" onclick="createDept()">Save Dept</button>
+                            <select id="bDept" class="form-select mb-1 dept-list"></select>
+                            <input type="text" id="bName" class="form-control mb-1" placeholder="Batch Name">
+                            <input type="number" id="bYear" class="form-control mb-1" placeholder="Year">
+                            <button class="btn btn-sm btn-success mb-2 w-100" onclick="createBatch()">Save Batch</button>
+                            <select id="sBatch" class="form-select mb-1 batch-list"></select>
+                            <input type="text" id="sName" class="form-control mb-1" placeholder="Section">
+                            <button class="btn btn-sm btn-success w-100" onclick="createSection()">Save Section</button>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="card p-3">
+                            <h6>Students & Courses</h6>
+                            <div class="row g-2 mb-3">
+                                <div class="col-6"><input type="text" id="stuRoll" class="form-control" placeholder="Roll No"></div>
+                                <div class="col-6"><input type="text" id="stuName" class="form-control" placeholder="Full Name"></div>
+                                <div class="col-12"><select id="stuSection" class="form-select section-list"></select></div>
+                                <button class="btn btn-primary" onclick="createStudent()">Add Student</button>
+                            </div>
+                            <hr>
+                            <input type="text" id="cCode" class="form-control mb-1" placeholder="Course Code">
+                            <input type="text" id="cName" class="form-control mb-1" placeholder="Course Name">
+                            <select id="cDept" class="form-select mb-2 dept-list"></select>
+                            <button class="btn btn-success w-100" onclick="createCourse()">Add Course</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: ASSIGNMENTS -->
+            <div class="tab-pane fade" id="staffTab">
+                <div class="row">
+                    <div class="col-md-5 card p-3">
+                        <h6>Faculty Setup</h6>
+                        <input type="text" id="fName" class="form-control mb-1" placeholder="Full Name">
+                        <input type="email" id="fEmail" class="form-control mb-1" placeholder="Email">
+                        <input type="password" id="fPass" class="form-control mb-1" placeholder="Password">
+                        <input type="text" id="fTok" class="form-control mb-1" placeholder="6-Digit Token">
+                        <select id="fDept" class="form-select mb-2 dept-list"></select>
+                        <button class="btn btn-primary w-100" onclick="createFaculty()">Create Faculty</button>
+                    </div>
+                    <div class="col-md-7 card p-3">
+                        <h6>Schedule Slot</h6>
+                        <div class="row g-2">
+                            <div class="col-6"><select id="ttSec" class="form-select section-list"></select></div>
+                            <div class="col-6"><input type="number" id="ttSem" class="form-control" placeholder="Sem"></div>
+                            <div class="col-4"><select id="ttDay" class="form-select"><option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option><option>Fri</option></select></div>
+                            <div class="col-4"><input type="number" id="ttSlot" class="form-control" placeholder="Slot 1-9"></div>
+                            <div class="col-4"><select id="ttCourse" class="form-select course-list"></select></div>
+                            <select id="ttFac" class="form-select faculty-list"></select>
+                            <button class="btn btn-danger w-100" onclick="createSlot()">Save Slot</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: FACULTY -->
+            <div class="tab-pane fade" id="facTab">
+                <div class="card p-4">
+                    <h5>Verification</h5>
+                    <input type="number" id="vSessId" class="form-control mb-2" placeholder="Session ID">
+                    <input type="text" id="vToken" class="form-control mb-2" placeholder="6-Digit Code">
+                    <button class="btn btn-success w-100" onclick="verify()">Verify</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: MARKING (CR) -->
+<div class="modal fade" id="markingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white"><h5>Mark Attendance</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="small fw-bold">Actual Course Conducted:</label>
+                        <select id="selCourse" class="form-select"></select>
+                    </div>
+                    <div class="col-6 pt-4">
+                        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="isFree"><label class="fw-bold text-danger">MARK AS FREE HOUR</label></div>
+                    </div>
+                </div>
+                <div id="stuList" class="table-responsive border-top pt-2"></div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-primary" onclick="submitAttendance()">Submit</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: HISTORY (ADMIN) -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white"><h5>Attendance Log</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body row">
+                <div class="col-md-4 border-end"><h6>Sessions</h6><div id="sessionLog" class="list-group"></div></div>
+                <div class="col-md-8"><h6>Records</h6><div id="recordLog" class="table-responsive"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const API = "http://localhost:3000/api";
+    let activeSlot = null;
+
+    async function req(url, method = 'GET', body = null) {
+        const h = { 'Content-Type': 'application/json' };
+        if (localStorage.getItem('token')) h['Authorization'] = `Bearer ${localStorage.getItem('token')}`;
+        const res = await fetch(`${API}${url}`, { method, headers: h, body: body ? JSON.stringify(body) : null });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error); throw data; }
+        return data;
+    }
+
+    function getMonday(d) {
+        d = new Date(d); let day = d.getDay(), diff = d.getDate() - day + (day == 0 ? -6 : 1);
+        return new Date(d.setDate(diff)).toISOString().split('T')[0];
+    }
+
+    async function login() {
+        const d = await req('/login', 'POST', { email: loginEmail.value, password: loginPass.value });
+        localStorage.setItem('token', d.token); localStorage.setItem('role', d.role); location.reload();
+    }
+    function logout() { localStorage.clear(); location.reload(); }
+
+    async function refreshAllData() {
+        try {
+            const [depts, batches, sections, courses, facs] = await Promise.all([
+                req('/admin/depts'), req('/admin/batches'), req('/admin/sections'), req('/admin/courses'), req('/admin/faculty')
+            ]);
+            fillSelect('.dept-list', depts, 'id', 'dept_code');
+            fillSelect('.batch-list', batches, 'id', 'batch_name');
+            fillSelect('.section-list', sections.map(s => ({id: s.id, name: `${s.batch_name} - ${s.section_name}`})), 'id', 'name');
+            fillSelect('.course-list', courses, 'course_code', 'course_name');
+            fillSelect('.faculty-list', facs, 'id', 'faculty_name');
+        } catch (e) {}
+    }
+
+    function fillSelect(selector, data, val, txt) {
+        document.querySelectorAll(selector).forEach(sel => {
+            const cur = sel.value;
+            sel.innerHTML = `<option value="">Select...</option>` + data.map(i => `<option value="${i[val]}">${i[txt]}</option>`).join('');
+            sel.value = cur;
+        });
+    }
+
+    async function renderGrid() {
+        const secId = vSec.value;
+        const startDay = getMonday(vWeekDate.value);
+        if(!secId) return;
+        const data = await req(`/common/week-grid?section_id=${secId}&start_date=${startDay}`);
+        const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+        hRow.innerHTML = '<th>Slot/Day</th>' + [1,2,3,4,5,6,7,8,9].map(i => `<th>${i}</th>`).join('');
+        bRow.innerHTML = days.map((day, idx) => {
+            let d = new Date(startDay); d.setDate(d.getDate() + idx);
+            let row = `<td class="day-col">${day}<span class="date-sub">${d.toLocaleDateString()}</span></td>`;
+            for(let i=1; i<=9; i++) {
+                const s = data.find(x => x.day === day && x.slot_number === i);
+                if(s) {
+                    let cat = s.session_category ? `cat-${s.session_category}` : '';
+                    row += `<td><div class="slot-box ${cat}" onclick='handleClick(${JSON.stringify(s)}, "${d.toISOString().split("T")[0]}")'>
+                        <b>${s.course_code}</b><br><small>${s.faculty_name}</small></div></td>`;
+                } else row += '<td>-</td>';
+            }
+            return `<tr>${row}</tr>`;
+        }).join('');
+    }
+
+    async function handleClick(slot, date) {
+        activeSlot = { ...slot, date };
+        const role = localStorage.getItem('role');
+        if(role === 'cr') {
+            const students = await req(`/cr/students-by-timetable/${slot.id}`);
+            const courses = await req('/cr/my-courses');
+            alert(courses);
+            
+            // Fix: Explicitly fill CR modal dropdown
+            fillSelect('#selCourse', courses, 'course_code', 'course_name');
+            document.getElementById('selCourse').value = slot.course_code;
+            
+            stuList.innerHTML = `<table class="table table-sm"><thead><tr><th>Roll</th><th>Name</th><th>Mark Absent</th></tr></thead><tbody>${students.map(s => `<tr><td>${s.roll_number}</td><td>${s.full_name}</td><td><div class="form-check form-switch"><input class="form-check-input stu-tgl" type="checkbox" checked data-id="${s.id}"></div></td></tr>`).join('')}</tbody></table>`;
+            new bootstrap.Modal(markingModal).show();
+        } else if(role === 'admin') {
+            const sessions = await req(`/admin/sessions-by-timetable/${slot.id}`);
+            sessionLog.innerHTML = sessions.map(s => `<div class="list-group-item session-item" onclick="fetchHistory(${s.id})">${new Date(s.session_date).toLocaleDateString()} - ${s.session_category.toUpperCase()}</div>`).join('');
+            if(sessions.length === 0) sessionLog.innerHTML = "<p class='p-2'>No records found.</p>";
+            recordLog.innerHTML = "<p class='text-muted'>Select a session date.</p>";
+            new bootstrap.Modal(historyModal).show();
+        }
+    }
+
+    async function fetchHistory(sid) {
+        const recs = await req(`/admin/records-by-session/${sid}`);
+        recordLog.innerHTML = `<table class="table table-sm"><thead><tr><th>Roll No</th><th>Full Name</th><th>Status</th></tr></thead><tbody>${recs.map(r => `<tr><td>${r.roll_number}</td><td>${r.full_name}</td><td class="${r.status === 'present' ? 'status-present' : 'status-absent'}">${r.status.toUpperCase()}</td></tr>`).join('')}</tbody></table>`;
+    }
+
+    async function submitAttendance() {
+        const records = Array.from(document.querySelectorAll('.stu-tgl')).map(i => ({ id: i.dataset.id, status: i.checked ? 'present' : 'absent' }));
+        await req('/cr/attendance', 'POST', { timetable_id: activeSlot.id, date: activeSlot.date, records, selected_course_code: selCourse.value, is_free: isFree.checked });
+        bootstrap.Modal.getInstance(markingModal).hide(); renderGrid();
+    }
+
+    // CREATE OPERATIONS
+    async function createDept() { await req('/admin/depts', 'POST', { name: dName.value, code: dCode.value }); refreshAllData(); }
+    async function createBatch() { await req('/admin/batches', 'POST', { dept_id: bDept.value, start_year: bYear.value, end_year: 0, batch_name: bName.value }); refreshAllData(); }
+    async function createSection() { await req('/admin/sections', 'POST', { batch_id: sBatch.value, section_name: sName.value }); refreshAllData(); }
+    async function createCourse() { await req('/admin/courses', 'POST', { code: cCode.value, name: cName.value, credits: 4, dept_id: cDept.value }); refreshAllData(); }
+    async function createStudent() { await req('/admin/students', 'POST', { roll: stuRoll.value, name: stuName.value, email: "s@stud.edu", section_id: stuSection.value }); alert("Saved"); }
+    async function createFaculty() { await req('/admin/faculty', 'POST', { email: fEmail.value, password: fPass.value, name: fName.value, dept_id: fDept.value, auth_key: fTok.value }); refreshAllData(); }
+    async function createSlot() { await req('/admin/timetable', 'POST', { section_id: ttSec.value, semester: ttSem.value, day: ttDay.value, slot: ttSlot.value, course_code: ttCourse.value, faculty_id: ttFac.value, room: "N/A" }); alert("Slot Assigned"); }
+    async function verify() { await req(`/faculty/verify/${vSessId.value}`, 'PUT', { token: vToken.value }); alert("Verified!"); }
+
+    window.onload = () => {
+        const r = localStorage.getItem('role');
+        if (r) {
+            loginSection.classList.add('hidden'); dashboard.classList.remove('hidden'); logoutBtn.classList.remove('hidden');
+            roleLabel.innerText = r.toUpperCase();
+            vWeekDate.value = getMonday(new Date());
+            if(r !== 'admin') document.querySelectorAll('.admin-only').forEach(e => e.parentElement.remove());
+            if(r !== 'faculty') document.querySelectorAll('.faculty-only').forEach(e => e.parentElement.remove());
+            refreshAllData().then(() => renderGrid());
+        }
+    };
+</script>
+</body>
+</html>
