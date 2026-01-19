@@ -52,7 +52,7 @@ app.post('/api/login', async (req, res) => {
           student_id: user.rows[0].student_id 
         },
         JWT_SECRET,
-        { expiresIn: "2d" }   // 👈 Token valid for 2 days
+        { expiresIn: "2d" }   
       );
       
     res.json({ token, role: user.rows[0].role });
@@ -371,8 +371,6 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
     try {
         await client.query('BEGIN');
 
-        // 1. Fetch Scheduled Data (Original Course, Original Faculty, Section ID)
-        // We need section_id to find who teaches the "Selected Course" for this class
         const ttResult = await client.query(
             'SELECT course_code, faculty_profile_id, section_id FROM timetable WHERE id = $1', 
             [timetable_id]
@@ -381,10 +379,9 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
         if (ttResult.rows.length === 0) throw new Error("Timetable slot not found");
         
         const scheduledCourse = ttResult.rows[0].course_code;
-        const originalFacultyId = ttResult.rows[0].faculty_profile_id; // The Requesting Faculty (Owner of slot)
+        const originalFacultyId = ttResult.rows[0].faculty_profile_id; 
         const sectionId = ttResult.rows[0].section_id;
 
-        // 2. Determine Session Category
         let category = 'normal';
         if (is_free) category = 'free';
         else if (selected_course_code !== scheduledCourse) category = 'swap';
@@ -404,7 +401,6 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
         ]);
         const sessionId = sessRes.rows[0].id;
 
-        // 4. Insert Attendance Records (Skip if free)
         if (category !== 'free' && records && records.length > 0) {
             for (let r of records) {
                 const status = r.status.toLowerCase(); 
@@ -624,17 +620,47 @@ app.get('/api/cr/students-by-studentid', authenticateToken, authorize(['cr', 'ad
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/faculty/verify/:sessionId', authenticateToken, authorize(['faculty']), async (req, res) => {
-    const { token } = req.body;
-    const profile = await pool.query('SELECT authorization_key FROM faculty_profiles WHERE user_id = $1', [req.user.id]);
-    if (profile.rows[0].authorization_key !== token) return res.status(401).json({ error: "Invalid 6-digit Token" });
-    
-    await pool.query('UPDATE attendance_sessions SET is_verified_by_faculty = true, verified_at = NOW() WHERE id = $1', [req.params.sessionId]);
-    res.json({ message: "Attendance verified and locked" });
+
+
+
+app.put('/api/faculty/verify/:sessionId', authenticateToken, authorize(['cr', 'faculty']), async (req, res) => {
+    const { token, timetable_id } = req.body; 
+
+    try {
+        const timetableResult = await pool.query(
+            'SELECT faculty_profile_id FROM timetable WHERE id = $1',
+            [timetable_id]
+        );
+
+        if (timetableResult.rows.length === 0) {
+            return res.status(404).json({ error: "Timetable slot not found" });
+        }
+
+        const facultyProfileId = timetableResult.rows[0].faculty_profile_id;
+        const profile = await pool.query(
+            'SELECT authorization_key FROM faculty_profiles WHERE id = $1',
+            [facultyProfileId]
+        );
+
+        if (profile.rows.length === 0) {
+            return res.status(404).json({ error: "Faculty profile not found" });
+        }
+
+        if (profile.rows[0].authorization_key !== token) {
+            return res.status(401).json({ error: "Invalid 6-digit Token" });
+        }
+        await pool.query(
+            'UPDATE attendance_sessions SET is_verified_by_faculty = true, verified_at = NOW() WHERE id = $1',
+            [req.params.sessionId]
+        );
+
+        res.json({ message: "Attendance verified and locked" });
+
+    } catch (err) {
+        console.error('Verification error:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
-
-
-
 
 app.get('/api/admin/students-by-filter', authenticateToken, async (req, res) => {
     try {
@@ -810,5 +836,131 @@ app.get('/api/admin/daily-attendance-overview', authenticateToken, async (req, r
         res.status(500).json({ error: err.message });
     }
 });
+
+
+// ==========================================
+// 8. FACULTY SPECIFIC TIMETABLE VIEWS (GROUPED FORMAT)
+// ==========================================
+
+const groupTimetableData = (rows) => {
+    const grouped = rows.reduce((acc, row) => {
+        const { full_class_title, ...slotDetails } = row;
+        
+        if (!acc[full_class_title]) {
+            acc[full_class_title] = [];
+        }
+        
+
+        acc[full_class_title].push(slotDetails);
+        return acc;
+    }, {});
+    
+    
+    return [grouped];
+};
+
+app.get('/api/faculty/my-schedule', authenticateToken, authorize(['faculty', 'admin']), async (req, res) => {
+    try {
+        let targetProfileId;
+
+        if (req.query.faculty_id) {
+           
+            if (req.user.role !== 'admin') {
+                return res.status(403).json({ error: "Access Denied" });
+            }
+            targetProfileId = req.query.faculty_id;
+        } else {
+            
+            const profileRes = await pool.query('SELECT id FROM faculty_profiles WHERE user_id = $1', [req.user.id]);
+            if (profileRes.rows.length === 0) {
+                return res.status(404).json({ error: "Faculty profile not found for this user." });
+            }
+            targetProfileId = profileRes.rows[0].id;
+        }
+
+        const sql = `
+            SELECT 
+                t.id as timetable_id,
+                t.day, 
+                t.slot_number, 
+                t.room_info, 
+                t.semester,
+                c.course_name, 
+                c.course_code,
+                
+                -- Title for Grouping (Removed Semester from title to allow easier filtering)
+                CONCAT(d.dept_code, ' ', b.batch_name, ' (', s.section_name, ')') as full_class_title
+            
+            FROM timetable t
+            JOIN courses c ON t.course_code = c.course_code
+            JOIN sections s ON t.section_id = s.id
+            JOIN batches b ON s.batch_id = b.id
+            JOIN departments d ON b.dept_id = d.id
+            WHERE t.faculty_profile_id = $1
+            ORDER BY 
+                t.semester,
+                CASE t.day 
+                    WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 
+                    WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 ELSE 7 
+                END, 
+                t.slot_number`;
+        
+        const result = await pool.query(sql, [targetProfileId]);
+        res.json(groupTimetableData(result.rows));
+
+    } catch (err) {
+        console.error("My Schedule Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(['faculty']), async (req, res) => {
+    try {
+        const sql = `
+            WITH MySections AS (
+                -- Find sections this faculty teaches
+                SELECT DISTINCT t.section_id, t.semester
+                FROM timetable t
+                JOIN faculty_profiles f ON t.faculty_profile_id = f.id
+                WHERE f.user_id = $1
+            )
+            SELECT 
+                t.id as timetable_id,
+                t.day, 
+                t.slot_number,
+                t.room_info,
+                t.semester,
+                c.course_name, 
+                c.course_code,
+                f.faculty_name, -- Shows who teaches this specific slot
+                
+                -- Title for Grouping
+                CONCAT(d.dept_code, ' Batch ', b.start_year, '-', b.end_year, ' Section ', s.section_name, ' Sem ', t.semester) as full_class_title
+            
+            FROM timetable t
+            JOIN MySections ms ON t.section_id = ms.section_id AND t.semester = ms.semester
+            JOIN courses c ON t.course_code = c.course_code
+            JOIN faculty_profiles f ON t.faculty_profile_id = f.id
+            JOIN sections s ON t.section_id = s.id
+            JOIN batches b ON s.batch_id = b.id
+            JOIN departments d ON b.dept_id = d.id
+            
+            ORDER BY 
+                full_class_title,
+                CASE t.day 
+                    WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 
+                    WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 ELSE 7 
+                END, 
+                t.slot_number`;
+
+        const result = await pool.query(sql, [req.user.id]);
+        res.json(groupTimetableData(result.rows));
+
+    } catch (err) {
+        console.error("My Classes Full Timetables Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 app.listen(3000, () => console.log("Server Running on 3000"));
