@@ -14,8 +14,8 @@ const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
     database: process.env.DB_NAME || 'attendance_db',
-    password: process.env.DB_PASSWORD || 'newpassword',
-    port: 5432,
+    password: process.env.DB_PASSWORD || 'Sreejithm11',
+    port: 5110,
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supreme_secret_999';
@@ -914,53 +914,79 @@ app.get('/api/faculty/my-schedule', authenticateToken, authorize(['faculty', 'ad
     }
 });
 
-app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(['faculty']), async (req, res) => {
-    try {
-        const sql = `
-            WITH MySections AS (
-                -- Find sections this faculty teaches
-                SELECT DISTINCT t.section_id, t.semester
-                FROM timetable t
-                JOIN faculty_profiles f ON t.faculty_profile_id = f.id
-                WHERE f.user_id = $1
-            )
-            SELECT 
-                t.id as timetable_id,
-                t.day, 
-                t.slot_number,
-                t.room_info,
-                t.semester,
-                c.course_name, 
-                c.course_code,
-                f.faculty_name, -- Shows who teaches this specific slot
-                
-                -- Title for Grouping
-                CONCAT(d.dept_code, ' Batch ', b.start_year, '-', b.end_year, ' Section ', s.section_name, ' Sem ', t.semester) as full_class_title
-            
-            FROM timetable t
-            JOIN MySections ms ON t.section_id = ms.section_id AND t.semester = ms.semester
-            JOIN courses c ON t.course_code = c.course_code
-            JOIN faculty_profiles f ON t.faculty_profile_id = f.id
-            JOIN sections s ON t.section_id = s.id
-            JOIN batches b ON s.batch_id = b.id
-            JOIN departments d ON b.dept_id = d.id
-            
-            ORDER BY 
-                full_class_title,
-                CASE t.day 
-                    WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 
-                    WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 ELSE 7 
-                END, 
-                t.slot_number`;
-
-        const result = await pool.query(sql, [req.user.id]);
-        res.json(groupTimetableData(result.rows));
-
-    } catch (err) {
-        console.error("My Classes Full Timetables Error:", err);
-        res.status(500).json({ error: err.message });
+app.get('/api/attendance/periodic',authenticateToken, authorize(['faculty','admin']), async (req, res) => {
+    const sectionId = req.query.sectionId;
+    const semester = req.query.semester;
+    const courseCode = req.query.courseCode;
+    const month = req.query.month; // YYYY-MM
+  
+    if (!sectionId || !semester || !courseCode || !month) {
+      return res.status(400).json({ error: "Missing required parameters" });
     }
-});
+  
+    // Validate month format
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "month must be in YYYY-MM format" });
+    }
+  
+    try {
+      const result = await pool.query(
+        `
+        SELECT
+          s.id AS student_id,
+          s.roll_number AS student_name,
+          sess.session_date::date AS date,
+          t.slot_number AS slot,
+          LOWER(r.status) AS status
+        FROM students s
+        JOIN attendance_records r ON r.student_id = s.id
+        JOIN attendance_sessions sess ON r.session_id = sess.id
+        JOIN timetable t ON sess.timetable_id = t.id
+        WHERE s.section_id = $1
+          AND t.semester = $2
+          AND sess.actual_course_code = $3
+          AND DATE_TRUNC('month', sess.session_date) = DATE_TRUNC('month', $4::date)
+          AND sess.session_category != 'free'
+        ORDER BY s.roll_number, sess.session_date, t.slot_number
+        `,
+        [sectionId, semester, courseCode, `${month}-01`]
+      );
+  
+      // Group in JS
+      const map = {};
+  
+      for (const row of result.rows) {
+        if (!map[row.student_id]) {
+          map[row.student_id] = {
+            studentId: row.student_id,
+            studentName: row.student_name,
+            records: [],
+            attended: 0,
+            total: 0
+          };
+        }
+  
+        map[row.student_id].records.push({
+          date: row.date,
+          slot: row.slot,
+          status: row.status
+        });
+  
+        map[row.student_id].total += 1;
+        if (row.status === 'present') {
+          map[row.student_id].attended += 1;
+        }
+      }
+  
+      res.json(Object.values(map));
+  
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to fetch periodic attendance" });
+    }
+  });
+
+
 
 
 app.listen(3000, () => console.log("Server Running on 3000"));
