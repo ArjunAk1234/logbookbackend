@@ -963,4 +963,145 @@ app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(
 });
 
 
+// BULK FACULTY PROFILE UPLOAD
+
+app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
+    const { profiles } = req.body; // Array of {name, email, dept_id, auth_key}
+    
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+        return res.status(400).json({ error: "No profiles provided" });
+    }
+
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+
+        // Prepare bulk insert values
+        const values = [];
+        const params = [];
+        let paramIndex = 1;
+
+        profiles.forEach(p => {
+            values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
+            params.push(p.name, p.email, p.dept_id, p.auth_key);
+            paramIndex += 4;
+        });
+
+        const insertSql = `
+            INSERT INTO faculty_profiles (faculty_name, email, dept_id, authorization_key)
+            VALUES ${values.join(', ')}
+        `;
+
+        await client.query(insertSql, params);
+        
+        await client.query('COMMIT');
+
+        res.json({ 
+            success: true,
+            message: `${profiles.length} faculty profiles created successfully` 
+        });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Bulk Upload Error:', err);
+        
+        res.status(500).json({ 
+            error: err.message,
+            detail: err.detail || undefined
+        });
+    } finally {
+        client.release();
+    }
+});
+
+
+// OPTIMIZED BULK STUDENT UPLOAD
+
+app.post('/api/admin/student-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
+    const { students } = req.body; // Array of {roll, name, email, section_id}
+    
+    if (!Array.isArray(students) || students.length === 0) {
+        return res.status(400).json({ error: "No students provided" });
+    }
+
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+
+        const values = [];
+        const params = [];
+        let paramIndex = 1;
+
+        students.forEach(s => {
+            values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
+            params.push(s.roll, s.name, s.email, s.section_id);
+            paramIndex += 4;
+        });
+
+        const insertSql = `
+            INSERT INTO students (roll_number, full_name, email, section_id)
+            VALUES ${values.join(', ')}
+        `;
+
+        await client.query(insertSql, params);
+        
+        await client.query('COMMIT');
+
+        res.json({ 
+            success: true,
+            message: `${students.length} students created successfully` 
+        });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Student Bulk Upload Error:', err);
+
+        res.status(500).json({ 
+            error: err.message,
+            detail: err.detail || undefined
+        });
+    } finally {
+        client.release();
+    }
+});
+
+
+// Get Faculty's authorization key
+app.get('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT authorization_key FROM faculty_profiles WHERE user_id = $1',
+            [req.user.id]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: "Faculty profile not found" });
+        }
+        
+        res.json({ authorization_key: result.rows[0].authorization_key });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update Faculty's authorization key
+app.put('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), async (req, res) => {
+    const { authorization_key } = req.body;
+    
+    try {
+        await pool.query(
+            'UPDATE faculty_profiles SET authorization_key = $1 WHERE user_id = $2',
+            [authorization_key, req.user.id]
+        );
+        
+        res.json({ message: "Authorization key updated successfully", authorization_key });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 app.listen(3000, () => console.log("Server Running on 3000"));
