@@ -371,6 +371,16 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
     try {
         await client.query('BEGIN');
 
+    
+        const existingCheck = await client.query(
+            'SELECT id FROM attendance_sessions WHERE timetable_id = $1 AND session_date = $2',
+            [timetable_id, date]
+        );
+
+        if (existingCheck.rows.length > 0) {
+            
+            throw new Error("Attendance has already been marked for this slot on this date.");
+        }
         const ttResult = await client.query(
             'SELECT course_code, faculty_profile_id, section_id FROM timetable WHERE id = $1', 
             [timetable_id]
@@ -382,11 +392,12 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
         const originalFacultyId = ttResult.rows[0].faculty_profile_id; 
         const sectionId = ttResult.rows[0].section_id;
 
+    
         let category = 'normal';
         if (is_free) category = 'free';
         else if (selected_course_code !== scheduledCourse) category = 'swap';
 
-        // 3. Insert into attendance_sessions
+        
         const sessSql = `
             INSERT INTO attendance_sessions 
             (timetable_id, session_date, marked_by_user_id, session_category, actual_course_code) 
@@ -411,16 +422,11 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
             }
         }
 
-        // ============================================================
-        // 5. AUTO-LOG SWAP ENTRY (If Swap or Free)
-        // ============================================================
+        
         if (category === 'swap' || category === 'free') {
-            
             let targetFacultyId = null;
 
             if (category === 'swap') {
-                // LOGIC: Find the Faculty who teaches the "Selected Course" to this "Section"
-                // We look for ANY slot in the timetable where this course is taught to this section
                 const targetFacRes = await client.query(
                     `SELECT faculty_profile_id FROM timetable 
                      WHERE section_id = $1 AND course_code = $2 
@@ -431,7 +437,6 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
                 if (targetFacRes.rows.length > 0) {
                     targetFacultyId = targetFacRes.rows[0].faculty_profile_id;
                 } else {
-                    // Fallback: If logged-in user is a faculty member, assume they are the substitute
                     if (req.user.role === 'faculty') {
                         const loggedInFac = await client.query(
                             'SELECT id FROM faculty_profiles WHERE user_id = $1', 
@@ -459,8 +464,14 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
 
     } catch (e) { 
         await client.query('ROLLBACK'); 
-        console.error(e);
-        res.status(500).json({ error: e.message }); 
+        console.error("Attendance Error:", e.message);
+        
+      
+        if (e.message.includes("already been marked")) {
+            res.status(409).json({ error: e.message });
+        } else {
+            res.status(500).json({ error: e.message }); 
+        }
     } finally { 
         client.release(); 
     }
@@ -623,7 +634,7 @@ app.get('/api/cr/students-by-studentid', authenticateToken, authorize(['cr', 'ad
 
 
 
-app.put('/api/faculty/verify/:sessionId', authenticateToken, authorize(['cr', 'faculty']), async (req, res) => {
+app.put('/api/faculty/verify', authenticateToken, authorize(['cr', 'faculty']), async (req, res) => {
     const { token, timetable_id } = req.body; 
 
     try {
@@ -649,10 +660,10 @@ app.put('/api/faculty/verify/:sessionId', authenticateToken, authorize(['cr', 'f
         if (profile.rows[0].authorization_key !== token) {
             return res.status(401).json({ error: "Invalid 6-digit Token" });
         }
-        await pool.query(
-            'UPDATE attendance_sessions SET is_verified_by_faculty = true, verified_at = NOW() WHERE id = $1',
-            [req.params.sessionId]
-        );
+        // await pool.query(
+        //     'UPDATE attendance_sessions SET is_verified_by_faculty = true, verified_at = NOW() WHERE id = $1',
+        //     [req.params.sessionId]
+        // );
 
         res.json({ message: "Attendance verified and locked" });
 
@@ -716,64 +727,147 @@ app.get('/api/admin/students-by-filter', authenticateToken, async (req, res) => 
 });
 
 
+// GET Student Individual Report
+// GET Student Individual Report
+app.get('/api/student-report', authenticateToken, async (req, res) => {
+    const { roll_number } = req.query;
 
-// GET Attendance Report / Shortage List
-app.get('/api/admin/attendance-report', authenticateToken, async (req, res) => {
-    const { section_id, course_code, threshold } = req.query; // e.g., threshold = 75
+    if (!roll_number) {
+        return res.status(400).json({ error: "Roll number is required" });
+    }
 
-    // SQL Logic:
-    // 1. Get all students in the section
-    // 2. Count Total Sessions (sess.id) for the course(s) linked to this section
-    // 3. Count "Present" records for each student
     const sql = `
-        WITH SessionCounts AS (
-            SELECT 
-                sess.actual_course_code,
-                COUNT(sess.id) as total_sessions
-            FROM attendance_sessions sess
-            JOIN timetable t ON sess.timetable_id = t.id
-            WHERE t.section_id = $1
-            AND ($2::text = 'ALL' OR sess.actual_course_code = $2)
-            AND sess.session_category != 'free' -- Don't count free periods
-            GROUP BY sess.actual_course_code
-        ),
-        StudentAttendance AS (
-            SELECT 
-                s.id as student_id,
-                s.roll_number,
-                s.full_name,
-                sess.actual_course_code,
-                COUNT(CASE WHEN r.status = 'Present' THEN 1 END) as attended_sessions
-            FROM students s
-            JOIN attendance_records r ON s.id = r.student_id
-            JOIN attendance_sessions sess ON r.session_id = sess.id
-            JOIN timetable t ON sess.timetable_id = t.id
-            WHERE s.section_id = $1
-            AND ($2::text = 'ALL' OR sess.actual_course_code = $2)
-            AND sess.session_category != 'free'
-            GROUP BY s.id, sess.actual_course_code
-        )
         SELECT 
-            sa.roll_number,
-            sa.full_name,
-            sa.actual_course_code as subject,
-            COALESCE(sc.total_sessions, 0) as total,
-            sa.attended_sessions as attended,
-            ROUND((sa.attended_sessions::decimal / NULLIF(sc.total_sessions, 0)) * 100, 1) as percentage
-        FROM StudentAttendance sa
-        JOIN SessionCounts sc ON sa.actual_course_code = sc.actual_course_code
-        WHERE ($3::int IS NULL OR (sa.attended_sessions::decimal / NULLIF(sc.total_sessions, 0)) * 100 < $3)
-        ORDER BY sa.roll_number, sa.actual_course_code;
+            c.course_name, 
+            c.course_code, 
+            COUNT(sess.id) AS total_classes,
+            COUNT(CASE WHEN LOWER(r.status) = 'present' THEN 1 END) AS attended_classes,
+            ROUND(
+                (COUNT(CASE WHEN LOWER(r.status) = 'present' THEN 1 END)::numeric / 
+                NULLIF(COUNT(sess.id), 0)) * 100, 2
+            ) AS attendance_percentage
+        FROM students s
+        -- Link student to their attendance records
+        JOIN attendance_records r ON s.id = r.student_id
+        -- Link records to the sessions held
+        JOIN attendance_sessions sess ON r.session_id = sess.id
+        -- Link sessions to the courses they belong to
+        JOIN courses c ON sess.actual_course_code = c.course_code
+        WHERE s.roll_number = $1
+        GROUP BY c.course_name, c.course_code
+        ORDER BY c.course_name ASC;
     `;
 
     try {
-        const result = await pool.query(sql, [section_id, course_code || 'ALL', threshold || 75]);
+        const result = await pool.query(sql, [roll_number]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "No attendance data found for this student" });
+        }
+
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Database Error:", err);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
+
+// GET Attendance Report / Shortage List
+app.get('/api/admin/attendance-report', async (req, res) => {
+    // REMOVED threshold from destructuring
+    const { section_id, course_code, semester, start_date, end_date } = req.query;
+
+    if (!section_id) return res.status(400).json({ error: "Section ID is required" });
+    if (!semester) return res.status(400).json({ error: "Semester is required" });
+
+    const sql = `
+        WITH 
+        -- 1. Get Configured Courses from TIMETABLE for this Section & Semester
+        --    Ensures the Subject column exists even if Total Classes = 0
+        distinct_courses AS (
+            SELECT DISTINCT 
+                t.course_code as actual_course_code, 
+                c.course_name
+            FROM timetable t
+            JOIN courses c ON t.course_code = c.course_code
+            WHERE t.section_id = $1
+            AND t.semester = $3  -- Parameter $3 is Semester
+        ),
+
+        -- 2. Count Total Sessions per Course
+        SessionCounts AS (
+            SELECT 
+                dc.actual_course_code,
+                dc.course_name,
+                COUNT(sess.id) as total_sessions
+            FROM distinct_courses dc
+            LEFT JOIN attendance_sessions sess 
+                ON dc.actual_course_code = sess.actual_course_code
+                AND sess.timetable_id IN (SELECT id FROM timetable WHERE section_id = $1)
+                AND sess.session_category != 'free'
+                AND ($4::date IS NULL OR sess.session_date >= $4) -- Parameter $4 is Start Date
+                AND ($5::date IS NULL OR sess.session_date <= $5) -- Parameter $5 is End Date
+            WHERE ($2::text = 'ALL' OR dc.actual_course_code = $2)
+            GROUP BY dc.actual_course_code, dc.course_name
+        ),
+
+        -- 3. Get All Students in the Section
+        SectionStudents AS (
+            SELECT id, roll_number, full_name 
+            FROM students 
+            WHERE section_id = $1
+        ),
+
+        -- 4. Get Actual Attendance Counts (Only Present)
+        RawAttendance AS (
+            SELECT 
+                r.student_id,
+                sess.actual_course_code,
+                COUNT(*) as attended_count
+            FROM attendance_records r
+            JOIN attendance_sessions sess ON r.session_id = sess.id
+            JOIN timetable t ON sess.timetable_id = t.id
+            WHERE t.section_id = $1
+            AND t.semester = $3
+            AND LOWER(r.status) = 'present'
+            AND ($4::date IS NULL OR sess.session_date >= $4)
+            AND ($5::date IS NULL OR sess.session_date <= $5)
+            GROUP BY r.student_id, sess.actual_course_code
+        )
+
+        -- 5. Final Report: Cross Join Students x Courses -> Left Join Attendance
+        SELECT 
+            s.roll_number,
+            s.full_name,
+            COALESCE(sc.course_name, sc.actual_course_code) as subject,
+            COALESCE(sc.total_sessions, 0) as total,
+            COALESCE(ra.attended_count, 0) as attended,
+            ROUND(
+                (COALESCE(ra.attended_count, 0)::decimal / NULLIF(sc.total_sessions, 0)) * 100, 
+            1) as percentage
+        FROM SectionStudents s
+        CROSS JOIN SessionCounts sc
+        LEFT JOIN RawAttendance ra 
+            ON s.id = ra.student_id 
+            AND sc.actual_course_code = ra.actual_course_code
+        ORDER BY s.roll_number, sc.actual_course_code;
+    `;
+
+    try {
+        const result = await pool.query(sql, [
+            section_id, 
+            course_code || 'ALL', 
+            semester,         // $3
+            start_date || null, // $4
+            end_date || null    // $5
+        ]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Attendance Report Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // GET Daily Attendance Overview (Specific Date & Section)
 app.get('/api/admin/daily-attendance-overview', authenticateToken, async (req, res) => {
@@ -914,160 +1008,153 @@ app.get('/api/faculty/my-schedule', authenticateToken, authorize(['faculty', 'ad
     }
 });
 
-app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(['faculty']), async (req, res) => {
+// ==========================================
+// CORRECTED ENDPOINT - Both 'present' AND 'late' count as attended
+// Only 'absent' is NOT attended
+// ==========================================
+
+app.get('/api/attendance/periodic',authenticateToken, authorize(['faculty','admin']), async (req, res) => {
+    const sectionId = req.query.sectionId;
+    const semester = req.query.semester;
+    const courseCode = req.query.courseCode;
+    const month = req.query.month; // YYYY-MM
+  
+    if (!sectionId || !semester || !courseCode || !month) {
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
+  
+    // Validate month format
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "month must be in YYYY-MM format" });
+    }
+  
     try {
-        const sql = `
-            WITH MySections AS (
-                -- Find sections this faculty teaches
-                SELECT DISTINCT t.section_id, t.semester
-                FROM timetable t
-                JOIN faculty_profiles f ON t.faculty_profile_id = f.id
-                WHERE f.user_id = $1
-            )
-            SELECT 
-                t.id as timetable_id,
-                t.day, 
-                t.slot_number,
-                t.room_info,
-                t.semester,
-                c.course_name, 
-                c.course_code,
-                f.faculty_name, -- Shows who teaches this specific slot
-                
-                -- Title for Grouping
-                CONCAT(d.dept_code, ' Batch ', b.start_year, '-', b.end_year, ' Section ', s.section_name, ' Sem ', t.semester) as full_class_title
-            
-            FROM timetable t
-            JOIN MySections ms ON t.section_id = ms.section_id AND t.semester = ms.semester
-            JOIN courses c ON t.course_code = c.course_code
-            JOIN faculty_profiles f ON t.faculty_profile_id = f.id
-            JOIN sections s ON t.section_id = s.id
-            JOIN batches b ON s.batch_id = b.id
-            JOIN departments d ON b.dept_id = d.id
-            
-            ORDER BY 
-                full_class_title,
-                CASE t.day 
-                    WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3 
-                    WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 ELSE 7 
-                END, 
-                t.slot_number`;
+      // Query for monthly attendance
+      const monthlyResult = await pool.query(
+        `
+        SELECT
+          s.id AS student_id,
+          s.roll_number AS student_name,
+          sess.session_date::date AS date,
+          t.slot_number AS slot,
+          LOWER(r.status) AS status
+        FROM students s
+        JOIN attendance_records r ON r.student_id = s.id
+        JOIN attendance_sessions sess ON r.session_id = sess.id
+        JOIN timetable t ON sess.timetable_id = t.id
+        WHERE s.section_id = $1
+          AND t.semester = $2
+          AND sess.actual_course_code = $3
+          AND DATE_TRUNC('month', sess.session_date) = DATE_TRUNC('month', $4::date)
+          AND sess.session_category != 'free'
+        ORDER BY s.roll_number, sess.session_date, t.slot_number
+        `,
+        [sectionId, semester, courseCode, `${month}-01`]
+      );
 
-        const result = await pool.query(sql, [req.user.id]);
-        res.json(groupTimetableData(result.rows));
+      // Query for TOTAL attendance (all months for this course)
+      // ✅ Both 'present' AND 'late' count as attended
+      const totalResult = await pool.query(
+        `
+        SELECT
+          s.id AS student_id,
+          COUNT(*) AS total_classes,
+          SUM(CASE WHEN LOWER(r.status) IN ('present', 'late') THEN 1 ELSE 0 END) AS total_attended
+        FROM students s
+        JOIN attendance_records r ON r.student_id = s.id
+        JOIN attendance_sessions sess ON r.session_id = sess.id
+        JOIN timetable t ON sess.timetable_id = t.id
+        WHERE s.section_id = $1
+          AND t.semester = $2
+          AND sess.actual_course_code = $3
+          AND sess.session_category != 'free'
+        GROUP BY s.id
+        `,
+        [sectionId, semester, courseCode]
+      );
 
+      // Create a map for total attendance data
+      const totalsMap = {};
+      for (const row of totalResult.rows) {
+        totalsMap[row.student_id] = {
+          totalClasses: parseInt(row.total_classes),
+          totalAttended: parseInt(row.total_attended),
+          overallPercentage: row.total_classes > 0 
+            ? parseFloat(((row.total_attended / row.total_classes) * 100).toFixed(2))
+            : 0
+        };
+      }
+  
+      // Group monthly data
+      const map = {};
+  
+      for (const row of monthlyResult.rows) {
+        if (!map[row.student_id]) {
+          map[row.student_id] = {
+            studentId: row.student_id,
+            studentName: row.student_name,
+            records: [],
+            attended: 0,
+            total: 0,
+            monthlyPercentage: 0,
+            // Add total attendance data
+            totalClasses: totalsMap[row.student_id]?.totalClasses || 0,
+            totalAttended: totalsMap[row.student_id]?.totalAttended || 0,
+            overallPercentage: totalsMap[row.student_id]?.overallPercentage || 0
+          };
+        }
+  
+        map[row.student_id].records.push({
+          date: row.date,
+          slot: row.slot,
+          status: row.status
+        });
+  
+        map[row.student_id].total += 1;
+        // ✅ Both 'present' AND 'late' count as attended for monthly too
+        if (row.status === 'present' || row.status === 'late') {
+          map[row.student_id].attended += 1;
+        }
+      }
+
+      // Calculate monthly percentage and add students with no attendance in this month
+      for (const studentId in map) {
+        const student = map[studentId];
+        student.monthlyPercentage = student.total > 0 
+          ? parseFloat(((student.attended / student.total) * 100).toFixed(2))
+          : 0;
+      }
+
+      // Add students who have total attendance but no attendance this month
+      const allStudents = await pool.query(
+        'SELECT id, roll_number FROM students WHERE section_id = $1 ORDER BY roll_number',
+        [sectionId]
+      );
+
+      for (const student of allStudents.rows) {
+        if (!map[student.id] && totalsMap[student.id]) {
+          map[student.id] = {
+            studentId: student.id,
+            studentName: student.roll_number,
+            records: [],
+            attended: 0,
+            total: 0,
+            monthlyPercentage: 0,
+            totalClasses: totalsMap[student.id].totalClasses,
+            totalAttended: totalsMap[student.id].totalAttended,
+            overallPercentage: totalsMap[student.id].overallPercentage
+          };
+        }
+      }
+  
+      res.json(Object.values(map));
+  
     } catch (err) {
-        console.error("My Classes Full Timetables Error:", err);
-        res.status(500).json({ error: err.message });
+      console.error(err);
+      res.status(500).json({ error: "Failed to fetch periodic attendance" });
     }
-});
-
-
-// BULK FACULTY PROFILE UPLOAD
-
-app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
-    const { profiles } = req.body; // Array of {name, email, dept_id, auth_key}
-    
-    if (!Array.isArray(profiles) || profiles.length === 0) {
-        return res.status(400).json({ error: "No profiles provided" });
-    }
-
-    const client = await pool.connect();
-    
-    try {
-        await client.query('BEGIN');
-
-        // Prepare bulk insert values
-        const values = [];
-        const params = [];
-        let paramIndex = 1;
-
-        profiles.forEach(p => {
-            values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
-            params.push(p.name, p.email, p.dept_id, p.auth_key);
-            paramIndex += 4;
-        });
-
-        const insertSql = `
-            INSERT INTO faculty_profiles (faculty_name, email, dept_id, authorization_key)
-            VALUES ${values.join(', ')}
-        `;
-
-        await client.query(insertSql, params);
-        
-        await client.query('COMMIT');
-
-        res.json({ 
-            success: true,
-            message: `${profiles.length} faculty profiles created successfully` 
-        });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Bulk Upload Error:', err);
-        
-        res.status(500).json({ 
-            error: err.message,
-            detail: err.detail || undefined
-        });
-    } finally {
-        client.release();
-    }
-});
-
-
-// OPTIMIZED BULK STUDENT UPLOAD
-
-app.post('/api/admin/student-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
-    const { students } = req.body; // Array of {roll, name, email, section_id}
-    
-    if (!Array.isArray(students) || students.length === 0) {
-        return res.status(400).json({ error: "No students provided" });
-    }
-
-    const client = await pool.connect();
-    
-    try {
-        await client.query('BEGIN');
-
-        const values = [];
-        const params = [];
-        let paramIndex = 1;
-
-        students.forEach(s => {
-            values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
-            params.push(s.roll, s.name, s.email, s.section_id);
-            paramIndex += 4;
-        });
-
-        const insertSql = `
-            INSERT INTO students (roll_number, full_name, email, section_id)
-            VALUES ${values.join(', ')}
-        `;
-
-        await client.query(insertSql, params);
-        
-        await client.query('COMMIT');
-
-        res.json({ 
-            success: true,
-            message: `${students.length} students created successfully` 
-        });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error('Student Bulk Upload Error:', err);
-
-        res.status(500).json({ 
-            error: err.message,
-            detail: err.detail || undefined
-        });
-    } finally {
-        client.release();
-    }
-});
-
-
+  });
+  
 // Get Faculty's authorization key
 app.get('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), async (req, res) => {
     try {
@@ -1101,7 +1188,6 @@ app.put('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), asyn
         res.status(500).json({ error: err.message });
     }
 });
-
 
 
 app.listen(3000, () => console.log("Server Running on 3000"));
