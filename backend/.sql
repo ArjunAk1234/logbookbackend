@@ -32,7 +32,7 @@ CREATE TABLE students (
 );
 
 
-CREATE TYPE user_role AS ENUM ('admin', 'faculty', 'cr');
+CREATE TYPE user_role AS ENUM ('admin', 'faculty', 'cr','student');
 
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
@@ -44,14 +44,6 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE faculty_profiles (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    faculty_name VARCHAR(150) NOT NULL,
-    dept_id INTEGER REFERENCES departments(id),
-
-    authorization_key VARCHAR(50) NOT NULL, 
-    designation VARCHAR(100)
-);
 
 CREATE TABLE courses (
     course_code VARCHAR(20) PRIMARY KEY,
@@ -61,81 +53,6 @@ CREATE TABLE courses (
 );
 
 CREATE TYPE day_of_week AS ENUM ('Mon', 'Tue', 'Wed', 'Thu', 'Fri');
-
-CREATE TABLE timetable (
-    id SERIAL PRIMARY KEY,
-    section_id INTEGER NOT NULL REFERENCES sections(id),
-    semester INTEGER NOT NULL,
-    day day_of_week NOT NULL,
-    slot_number INTEGER NOT NULL CHECK (slot_number BETWEEN 1 AND 9),
-    course_code VARCHAR(20) REFERENCES courses(course_code),
-    faculty_user_id INTEGER REFERENCES users(id), -- Points to a 'faculty' role user
-    room_info VARCHAR(100), -- e.g., 'N209D', 'Lab S304B'
-    UNIQUE (section_id, semester, day, slot_number)
-);
-
--- 7. Attendance Logic
-CREATE TABLE attendance_sessions (
-    id SERIAL PRIMARY KEY,
-    timetable_id INTEGER NOT NULL REFERENCES timetable(id),
-    session_date DATE NOT NULL,
-    marked_by_user_id INTEGER NOT NULL REFERENCES users(id), 
-
-    is_verified_by_faculty BOOLEAN DEFAULT true,
-    verified_at TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled', 'completed', 'cancelled'
-    UNIQUE (timetable_id, session_date)
-);
-
-CREATE TABLE attendance_records (
-    id SERIAL PRIMARY KEY,
-    session_id INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
-    student_id INTEGER NOT NULL REFERENCES students(id),
-    status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent', 'late')),
-    UNIQUE (session_id, student_id)
-);
-
-
-
-ALTER TABLE faculty_profiles 
-ADD COLUMN email VARCHAR(150) UNIQUE NOT NULL;
-
-INSERT INTO users (email, password_hash, role) 
-VALUES (
-    'admin@system.com', 
-    '$2b$10$QNMYt2VhJjvwOqIIYeosHeXs1.Xzu65fI/I1N70g16rdylDekQDy2', 
-    'admin'
-);
-
-
-select * from users;
-select * from students;
-select  * from batches;
-select * from faculty_profiles;
-select * from attendance_sessions;
-select * from attendance_records ;
-update  users set student_id='1' where email='sudent@system.com';
-
-
-CREATE TABLE IF NOT EXISTS class_swaps (
-    id SERIAL PRIMARY KEY,
-    source_timetable_id INTEGER NOT NULL REFERENCES timetable(id),
-    requesting_faculty_id INTEGER NOT NULL REFERENCES faculty_profiles(id),
-    target_faculty_id INTEGER REFERENCES faculty_profiles(id), 
-    requested_date DATE NOT NULL,
-    reason TEXT,
-    status VARCHAR(20) DEFAULT 'approved', 
-    approved_by_id INTEGER REFERENCES faculty_profiles(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-
-DROP TABLE IF EXISTS attendance_sessions CASCADE; 
-DROP TABLE IF EXISTS class_swaps CASCADE;         
-DROP TABLE IF EXISTS timetable CASCADE;           
-DROP TABLE IF EXISTS faculty_profiles CASCADE;   
-
-
 CREATE TABLE faculty_profiles (
     id SERIAL PRIMARY KEY, 
     user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE SET NULL, 
@@ -183,6 +100,19 @@ CREATE TABLE IF NOT EXISTS class_swaps (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+
+
+
+CREATE TABLE attendance_records (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL REFERENCES students(id),
+    status VARCHAR(10) NOT NULL CHECK (status IN ('present', 'absent', 'late')),
+    UNIQUE (session_id, student_id)
+);
+
+
+
 ALTER TABLE users ADD COLUMN semester INTEGER;
 
 TRUNCATE TABLE
@@ -198,3 +128,12 @@ TRUNCATE TABLE
     departments,
     courses
 RESTART IDENTITY CASCADE;
+
+
+
+INSERT INTO users (email, password_hash, role) 
+VALUES (
+    'admin@system.com', 
+    '$2b$10$QNMYt2VhJjvwOqIIYeosHeXs1.Xzu65fI/I1N70g16rdylDekQDy2', 
+    'admin'
+);
