@@ -13,8 +13,8 @@ app.use(express.json());
 const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'attendance_db',
-    password: process.env.DB_PASSWORD || 'newpassword',
+    database: process.env.DB_NAME || 'attend',
+    password: process.env.DB_PASSWORD || 'postgres',
     port: 5432,
 });
 
@@ -44,17 +44,17 @@ app.post('/api/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.rows[0].password_hash);
     if (!valid) return res.status(401).json({ error: "Wrong password" });
 
-    
+
     const token = jwt.sign(
-        { 
-          id: user.rows[0].id, 
-          role: user.rows[0].role,
-          student_id: user.rows[0].student_id 
+        {
+            id: user.rows[0].id,
+            role: user.rows[0].role,
+            student_id: user.rows[0].student_id
         },
         JWT_SECRET,
-        { expiresIn: "2d" }   
-      );
-      
+        { expiresIn: "2d" }
+    );
+
     res.json({ token, role: user.rows[0].role });
 });
 
@@ -167,7 +167,7 @@ app.post('/api/admin/faculty-profile', authenticateToken, authorize(['admin']), 
 app.post('/api/admin/faculty-login', authenticateToken, authorize(['admin']), async (req, res) => {
     const { faculty_profile_id, password } = req.body;
     const client = await pool.connect();
-    
+
     try {
         await client.query('BEGIN');
 
@@ -205,11 +205,75 @@ app.put('/api/admin/faculty/:userId', authenticateToken, authorize(['admin']), a
     res.json({ message: "Faculty Profile Updated" });
 });
 
-app.delete('/api/admin/faculty/:userId', authenticateToken, authorize(['admin']), async (req, res) => {
-    await pool.query('DELETE FROM users WHERE id = $1 AND role = \'faculty\'', [req.params.userId]);
-    res.json({ message: "Faculty Deleted" });
+
+app.delete('/api/admin/faculty/:profileId', authenticateToken, authorize(['admin']), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Get the user_id before we delete the profile
+        const profileRes = await client.query(
+            'SELECT user_id FROM faculty_profiles WHERE id = $1',
+            [req.params.profileId]
+        );
+
+        if (profileRes.rows.length === 0) {
+            return res.status(404).json({ error: "Faculty profile not found" });
+        }
+
+        const userId = profileRes.rows[0].user_id;
+
+        // 2. Preserve Timetable: Set faculty_profile_id to NULL 
+        // This prevents the timetable slots from being deleted
+        await client.query(
+            'UPDATE timetable SET faculty_profile_id = NULL WHERE faculty_profile_id = $1',
+            [req.params.profileId]
+        );
+
+        // 3. Delete the Faculty Profile
+        await client.query('DELETE FROM faculty_profiles WHERE id = $1', [req.params.profileId]);
+
+        // 4. Delete the User Account (Login credentials)
+        if (userId) {
+            await client.query('DELETE FROM users WHERE id = $1', [userId]);
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: "Faculty profile and user account removed. Timetable preserved." });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error(e);
+        res.status(500).json({ error: "Failed to delete faculty: " + e.message });
+    } finally {
+        client.release();
+    }
 });
 
+// ADMIN: Reset Password for CR or Faculty
+app.post('/api/admin/reset-password', authenticateToken, authorize(['admin']), async (req, res) => {
+    const { userId, newPassword } = req.body;
+
+    if (!userId || !newPassword) {
+        return res.status(400).json({ error: "User ID and New Password are required" });
+    }
+
+    try {
+        const hash = await bcrypt.hash(newPassword, 10);
+
+        const result = await pool.query(
+            'UPDATE users SET password_hash = $1 WHERE id = $2 AND role IN (\'faculty\', \'cr\') RETURNING id',
+            [hash, userId]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: "User not found or role cannot be reset via this endpoint" });
+        }
+
+        res.json({ message: "Password updated successfully" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 app.post('/api/admin/students', authenticateToken, authorize(['admin']), async (req, res) => {
     const { roll, name, email, section_id } = req.body;
@@ -256,7 +320,7 @@ app.post('/api/admin/promote-cr', authenticateToken, authorize(['admin']), async
         } else {
             // INSERT new user
             await pool.query(
-                'INSERT INTO users (email, password_hash, role, student_id, semester) VALUES ($1, $2, \'cr\', $3, $4)', 
+                'INSERT INTO users (email, password_hash, role, student_id, semester) VALUES ($1, $2, \'cr\', $3, $4)',
                 [email, hash, student_id, semester || 1]
             );
             res.json({ message: "New user created and promoted to CR." });
@@ -271,7 +335,7 @@ app.delete('/api/admin/demote-cr/:studentId', authenticateToken, authorize(['adm
     try {
         // Instead of DELETING (which breaks Foreign Keys), we just downgrade the role
         const result = await pool.query(
-            'UPDATE users SET role = \'student\' WHERE student_id = $1 AND role = \'cr\'', 
+            'UPDATE users SET role = \'student\' WHERE student_id = $1 AND role = \'cr\'',
             [req.params.studentId]
         );
 
@@ -300,10 +364,10 @@ app.get('/api/admin/courses', authenticateToken, async (req, res) => {
 app.put('/api/admin/courses/:code', authenticateToken, authorize(['admin']), async (req, res) => {
     // Added dept_id to the destructuring and query
     const { name, credits, dept_id } = req.body;
-    
+
     try {
         await pool.query(
-            'UPDATE courses SET course_name=$1, credits=$2, dept_id=$3 WHERE course_code=$4', 
+            'UPDATE courses SET course_name=$1, credits=$2, dept_id=$3 WHERE course_code=$4',
             [name, credits, dept_id, req.params.code]
         );
         res.json({ message: "Course Updated" });
@@ -382,62 +446,62 @@ app.get('/api/cr/my-courses', authenticateToken, authorize(['cr']), async (req, 
 app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'admin']), async (req, res) => {
     const { timetable_id, date, records, selected_course_code, is_free } = req.body;
     const client = await pool.connect();
-    
+
     try {
         await client.query('BEGIN');
 
-    
+
         const existingCheck = await client.query(
             'SELECT id FROM attendance_sessions WHERE timetable_id = $1 AND session_date = $2',
             [timetable_id, date]
         );
 
         if (existingCheck.rows.length > 0) {
-            
+
             throw new Error("Attendance has already been marked for this slot on this date.");
         }
         const ttResult = await client.query(
-            'SELECT course_code, faculty_profile_id, section_id FROM timetable WHERE id = $1', 
+            'SELECT course_code, faculty_profile_id, section_id FROM timetable WHERE id = $1',
             [timetable_id]
         );
-        
+
         if (ttResult.rows.length === 0) throw new Error("Timetable slot not found");
-        
+
         const scheduledCourse = ttResult.rows[0].course_code;
-        const originalFacultyId = ttResult.rows[0].faculty_profile_id; 
+        const originalFacultyId = ttResult.rows[0].faculty_profile_id;
         const sectionId = ttResult.rows[0].section_id;
 
-    
+
         let category = 'normal';
         if (is_free) category = 'free';
         else if (selected_course_code !== scheduledCourse) category = 'swap';
 
-        
+
         const sessSql = `
             INSERT INTO attendance_sessions 
             (timetable_id, session_date, marked_by_user_id, session_category, actual_course_code) 
             VALUES ($1, $2, $3, $4, $5) RETURNING id`;
-        
+
         const sessRes = await client.query(sessSql, [
-            timetable_id, 
-            date, 
-            req.user.id, 
-            category, 
+            timetable_id,
+            date,
+            req.user.id,
+            category,
             is_free ? null : selected_course_code
         ]);
         const sessionId = sessRes.rows[0].id;
 
         if (category !== 'free' && records && records.length > 0) {
             for (let r of records) {
-                const status = r.status.toLowerCase(); 
+                const status = r.status.toLowerCase();
                 await client.query(
-                    'INSERT INTO attendance_records (session_id, student_id, status) VALUES ($1, $2, $3)', 
+                    'INSERT INTO attendance_records (session_id, student_id, status) VALUES ($1, $2, $3)',
                     [sessionId, r.id, status]
                 );
             }
         }
 
-        
+
         if (category === 'swap' || category === 'free') {
             let targetFacultyId = null;
 
@@ -454,7 +518,7 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
                 } else {
                     if (req.user.role === 'faculty') {
                         const loggedInFac = await client.query(
-                            'SELECT id FROM faculty_profiles WHERE user_id = $1', 
+                            'SELECT id FROM faculty_profiles WHERE user_id = $1',
                             [req.user.id]
                         );
                         if (loggedInFac.rows.length > 0) targetFacultyId = loggedInFac.rows[0].id;
@@ -462,8 +526,8 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
                 }
             }
 
-            const swapReason = category === 'free' 
-                ? 'Class declared Free during attendance marking' 
+            const swapReason = category === 'free'
+                ? 'Class declared Free during attendance marking'
                 : `Course changed from ${scheduledCourse} to ${selected_course_code}`;
 
             await client.query(`
@@ -477,24 +541,24 @@ app.post('/api/cr/attendance', authenticateToken, authorize(['cr', 'faculty', 'a
         await client.query('COMMIT');
         res.json({ message: "Attendance processed and swap logged", sessionId, category });
 
-    } catch (e) { 
-        await client.query('ROLLBACK'); 
+    } catch (e) {
+        await client.query('ROLLBACK');
         console.error("Attendance Error:", e.message);
-        
-      
+
+
         if (e.message.includes("already been marked")) {
             res.status(409).json({ error: e.message });
         } else {
-            res.status(500).json({ error: e.message }); 
+            res.status(500).json({ error: e.message });
         }
-    } finally { 
-        client.release(); 
+    } finally {
+        client.release();
     }
 });
 
 app.get('/api/common/week-grid', authenticateToken, async (req, res) => {
     try {
-        const { section_id, start_date, semester } = req.query; 
+        const { section_id, start_date, semester } = req.query;
 
         const sql = `
             SELECT 
@@ -546,7 +610,7 @@ app.get('/api/common/timetable-by-class', authenticateToken, async (req, res) =>
 
         // Logic: If parameters are NOT provided, derive them from the Logged-in CR/Student
         if (!section_id || !semester) {
-            
+
             if (!req.user.student_id) {
                 return res.status(403).json({ error: "Not a student/CR account, and no parameters provided." });
             }
@@ -558,7 +622,7 @@ app.get('/api/common/timetable-by-class', authenticateToken, async (req, res) =>
                 JOIN students s ON u.student_id = s.id
                 WHERE u.id = $1
             `;
-            
+
             const contextRes = await pool.query(contextSql, [req.user.id]);
 
             if (contextRes.rows.length === 0) {
@@ -650,7 +714,7 @@ app.get('/api/cr/students-by-studentid', authenticateToken, authorize(['cr', 'ad
 
 
 app.put('/api/faculty/verify', authenticateToken, authorize(['cr', 'faculty']), async (req, res) => {
-    const { token, timetable_id } = req.body; 
+    const { token, timetable_id } = req.body;
 
     try {
         const timetableResult = await pool.query(
@@ -690,7 +754,7 @@ app.put('/api/faculty/verify', authenticateToken, authorize(['cr', 'faculty']), 
 
 app.get('/api/admin/students-by-filter', authenticateToken, async (req, res) => {
     try {
-        const { section_id, semester } = req.query; 
+        const { section_id, semester } = req.query;
 
         if (!section_id) {
             return res.status(400).json({ error: "Section ID is required" });
@@ -796,7 +860,7 @@ app.get('/api/admin/daily-attendance-overview', authenticateToken, async (req, r
         // $3: semester
         // $4: dayName
         const result = await pool.query(sql, [section_id, date, semester, dayName]);
-        
+
         res.json(result.rows);
 
     } catch (err) {
@@ -810,17 +874,17 @@ app.get('/api/admin/daily-attendance-overview', authenticateToken, async (req, r
 const groupTimetableData = (rows) => {
     const grouped = rows.reduce((acc, row) => {
         const { full_class_title, ...slotDetails } = row;
-        
+
         if (!acc[full_class_title]) {
             acc[full_class_title] = [];
         }
-        
+
 
         acc[full_class_title].push(slotDetails);
         return acc;
     }, {});
-    
-    
+
+
     return [grouped];
 };
 
@@ -829,13 +893,13 @@ app.get('/api/faculty/my-schedule', authenticateToken, authorize(['faculty', 'ad
         let targetProfileId;
 
         if (req.query.faculty_id) {
-           
+
             if (req.user.role !== 'admin') {
                 return res.status(403).json({ error: "Access Denied" });
             }
             targetProfileId = req.query.faculty_id;
         } else {
-            
+
             const profileRes = await pool.query('SELECT id FROM faculty_profiles WHERE user_id = $1', [req.user.id]);
             if (profileRes.rows.length === 0) {
                 return res.status(404).json({ error: "Faculty profile not found for this user." });
@@ -869,7 +933,7 @@ app.get('/api/faculty/my-schedule', authenticateToken, authorize(['faculty', 'ad
                     WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6 ELSE 7 
                 END, 
                 t.slot_number`;
-        
+
         const result = await pool.query(sql, [targetProfileId]);
         res.json(groupTimetableData(result.rows));
 
@@ -932,13 +996,13 @@ app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(
 
 app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
     const { profiles } = req.body; // Array of {name, email, dept_id, auth_key}
-    
+
     if (!Array.isArray(profiles) || profiles.length === 0) {
         return res.status(400).json({ error: "No profiles provided" });
     }
 
     const client = await pool.connect();
-    
+
     try {
         await client.query('BEGIN');
 
@@ -959,19 +1023,19 @@ app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin'
         `;
 
         await client.query(insertSql, params);
-        
+
         await client.query('COMMIT');
 
-        res.json({ 
+        res.json({
             success: true,
-            message: `${profiles.length} faculty profiles created successfully` 
+            message: `${profiles.length} faculty profiles created successfully`
         });
 
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Bulk Upload Error:', err);
-        
-        res.status(500).json({ 
+
+        res.status(500).json({
             error: err.message,
             detail: err.detail || undefined
         });
@@ -985,13 +1049,13 @@ app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin'
 
 app.post('/api/admin/student-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
     const { students } = req.body; // Array of {roll, name, email, section_id}
-    
+
     if (!Array.isArray(students) || students.length === 0) {
         return res.status(400).json({ error: "No students provided" });
     }
 
     const client = await pool.connect();
-    
+
     try {
         await client.query('BEGIN');
 
@@ -1011,19 +1075,19 @@ app.post('/api/admin/student-bulk-upload', authenticateToken, authorize(['admin'
         `;
 
         await client.query(insertSql, params);
-        
+
         await client.query('COMMIT');
 
-        res.json({ 
+        res.json({
             success: true,
-            message: `${students.length} students created successfully` 
+            message: `${students.length} students created successfully`
         });
 
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Student Bulk Upload Error:', err);
 
-        res.status(500).json({ 
+        res.status(500).json({
             error: err.message,
             detail: err.detail || undefined
         });
@@ -1040,11 +1104,11 @@ app.get('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), asyn
             'SELECT authorization_key FROM faculty_profiles WHERE user_id = $1',
             [req.user.id]
         );
-        
+
         if (result.rows.length === 0) {
             return res.status(404).json({ error: "Faculty profile not found" });
         }
-        
+
         res.json({ authorization_key: result.rows[0].authorization_key });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1054,13 +1118,13 @@ app.get('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), asyn
 // Update Faculty's authorization key
 app.put('/api/faculty/auth-key', authenticateToken, authorize(['faculty']), async (req, res) => {
     const { authorization_key } = req.body;
-    
+
     try {
         await pool.query(
             'UPDATE faculty_profiles SET authorization_key = $1 WHERE user_id = $2',
             [authorization_key, req.user.id]
         );
-        
+
         res.json({ message: "Authorization key updated successfully", authorization_key });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1122,12 +1186,12 @@ app.get('/api/student-report', async (req, res) => {
 
     try {
         const result = await pool.query(sql, [
-            roll_number, 
-            semester, 
-            start_date || null, 
+            roll_number,
+            semester,
+            start_date || null,
             end_date || null
         ]);
-        
+
         // Return empty array if no sessions found, but don't error out
         res.json(result.rows);
     } catch (err) {
@@ -1218,8 +1282,8 @@ app.get('/api/admin/attendance-report', async (req, res) => {
 
     try {
         const result = await pool.query(sql, [
-            section_id, 
-            course_code || 'ALL', 
+            section_id,
+            course_code || 'ALL',
             semester,         // $3
             start_date || null, // $4
             end_date || null    // $5
@@ -1232,25 +1296,25 @@ app.get('/api/admin/attendance-report', async (req, res) => {
 });
 app.get('/api/attendance/periodic', authenticateToken, authorize(['faculty', 'admin']), async (req, res) => {
     const { sectionId, semester, courseCode, month } = req.query;
-  
+
     if (!sectionId || !semester || !courseCode || !month) {
-      return res.status(400).json({ error: "Missing required parameters" });
+        return res.status(400).json({ error: "Missing required parameters" });
     }
-  
+
     try {
-      // 1. Get ALL Students in the Section
-      const studentsRes = await pool.query(
-        `SELECT id, roll_number, full_name 
+        // 1. Get ALL Students in the Section
+        const studentsRes = await pool.query(
+            `SELECT id, roll_number, full_name 
          FROM students 
          WHERE section_id = $1 
          ORDER BY roll_number`,
-        [sectionId]
-      );
-      const allStudents = studentsRes.rows;
+            [sectionId]
+        );
+        const allStudents = studentsRes.rows;
 
-      // 2. Get ALL Sessions for the Month
-      const sessionsRes = await pool.query(
-        `SELECT 
+        // 2. Get ALL Sessions for the Month
+        const sessionsRes = await pool.query(
+            `SELECT 
             sess.id AS session_id,
             sess.session_date::date AS date,
             t.slot_number AS slot
@@ -1262,27 +1326,27 @@ app.get('/api/attendance/periodic', authenticateToken, authorize(['faculty', 'ad
            AND TO_CHAR(sess.session_date, 'YYYY-MM') = $4
            AND sess.session_category != 'free'
          ORDER BY sess.session_date, t.slot_number`,
-        [sectionId, semester, courseCode, month]
-      );
-      const allSessions = sessionsRes.rows;
+            [sectionId, semester, courseCode, month]
+        );
+        const allSessions = sessionsRes.rows;
 
-      // 3. Get ALL Attendance Records for these sessions
-      const sessionIds = allSessions.map(s => s.session_id);
-      let allRecords = [];
-      
-      if (sessionIds.length > 0) {
-        const recordsRes = await pool.query(
-            `SELECT session_id, student_id, LOWER(status) as status
+        // 3. Get ALL Attendance Records for these sessions
+        const sessionIds = allSessions.map(s => s.session_id);
+        let allRecords = [];
+
+        if (sessionIds.length > 0) {
+            const recordsRes = await pool.query(
+                `SELECT session_id, student_id, LOWER(status) as status
              FROM attendance_records 
              WHERE session_id = ANY($1::int[])`,
-            [sessionIds]
-        );
-        allRecords = recordsRes.rows;
-      }
+                [sessionIds]
+            );
+            allRecords = recordsRes.rows;
+        }
 
-      // 4. Get Overall Totals (Approximate based on existing records)
-      const totalsRes = await pool.query(
-        `SELECT 
+        // 4. Get Overall Totals (Approximate based on existing records)
+        const totalsRes = await pool.query(
+            `SELECT 
             r.student_id,
             COUNT(sess.id) as total_classes,
             COUNT(CASE WHEN LOWER(r.status) IN ('present', 'late') THEN 1 END) as attended
@@ -1294,71 +1358,71 @@ app.get('/api/attendance/periodic', authenticateToken, authorize(['faculty', 'ad
            AND sess.actual_course_code = $3
            AND sess.session_category != 'free'
          GROUP BY r.student_id`,
-        [sectionId, semester, courseCode]
-      );
-      
-      const totalsMap = {};
-      totalsRes.rows.forEach(r => {
-        totalsMap[r.student_id] = {
-            total: parseInt(r.total_classes),
-            attended: parseInt(r.attended)
-        };
-      });
+            [sectionId, semester, courseCode]
+        );
 
-      // 5. Construct Response
-      const responseData = allStudents.map(student => {
-        const studentId = student.id;
-        const studentName = student.roll_number;
-
-        // Map every session to a status
-        const records = allSessions.map(session => {
-            const record = allRecords.find(r => 
-                r.session_id === session.session_id && 
-                r.student_id === studentId
-            );
-
-            // KEY CHANGE: Return 'unmarked' if no record found
-            return {
-                date: session.date,
-                slot: session.slot,
-                status: record ? record.status : 'unmarked' 
+        const totalsMap = {};
+        totalsRes.rows.forEach(r => {
+            totalsMap[r.student_id] = {
+                total: parseInt(r.total_classes),
+                attended: parseInt(r.attended)
             };
         });
 
-        const monthlyTotal = records.length;
-        const monthlyAttended = records.filter(r => 
-            r.status === 'present' || r.status === 'late'
-        ).length;
-        
-        const monthlyPercentage = monthlyTotal > 0 
-            ? ((monthlyAttended / monthlyTotal) * 100).toFixed(0) 
-            : 0;
+        // 5. Construct Response
+        const responseData = allStudents.map(student => {
+            const studentId = student.id;
+            const studentName = student.roll_number;
 
-        const overallData = totalsMap[studentId] || { total: 0, attended: 0 };
-        const overallPercentage = overallData.total > 0
-            ? ((overallData.attended / overallData.total) * 100).toFixed(1)
-            : 0;
+            // Map every session to a status
+            const records = allSessions.map(session => {
+                const record = allRecords.find(r =>
+                    r.session_id === session.session_id &&
+                    r.student_id === studentId
+                );
 
-        return {
-            studentId,
-            studentName,
-            records,
-            monthlySummary: {
-                attended: monthlyAttended,
-                total: monthlyTotal,
-                percentage: monthlyPercentage
-            },
-            totalClasses: overallData.total,
-            totalAttended: overallData.attended,
-            overallPercentage: parseFloat(overallPercentage)
-        };
-      });
-  
-      res.json(responseData);
-  
+                // KEY CHANGE: Return 'unmarked' if no record found
+                return {
+                    date: session.date,
+                    slot: session.slot,
+                    status: record ? record.status : 'unmarked'
+                };
+            });
+
+            const monthlyTotal = records.length;
+            const monthlyAttended = records.filter(r =>
+                r.status === 'present' || r.status === 'late'
+            ).length;
+
+            const monthlyPercentage = monthlyTotal > 0
+                ? ((monthlyAttended / monthlyTotal) * 100).toFixed(0)
+                : 0;
+
+            const overallData = totalsMap[studentId] || { total: 0, attended: 0 };
+            const overallPercentage = overallData.total > 0
+                ? ((overallData.attended / overallData.total) * 100).toFixed(1)
+                : 0;
+
+            return {
+                studentId,
+                studentName,
+                records,
+                monthlySummary: {
+                    attended: monthlyAttended,
+                    total: monthlyTotal,
+                    percentage: monthlyPercentage
+                },
+                totalClasses: overallData.total,
+                totalAttended: overallData.attended,
+                overallPercentage: parseFloat(overallPercentage)
+            };
+        });
+
+        res.json(responseData);
+
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Failed to fetch periodic attendance" });
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch periodic attendance" });
     }
 });
 
@@ -1456,12 +1520,12 @@ app.get('/api/admin/attendance-shortage', authenticateToken, async (req, res) =>
 
     try {
         const result = await pool.query(sql, [
-            section_id, 
-            course_code || 'ALL', 
+            section_id,
+            course_code || 'ALL',
             semester,
             start_date || null,
             end_date || null,
-            thresholdValue  
+            thresholdValue
         ]);
         res.json(result.rows);
     } catch (err) {
