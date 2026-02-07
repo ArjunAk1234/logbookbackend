@@ -50,6 +50,7 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign(
         {
+            email: user.rows[0].email,
             id: user.rows[0].id,
             role: user.rows[0].role,
             student_id: user.rows[0].student_id
@@ -275,6 +276,38 @@ app.post('/api/admin/reset-password', authenticateToken, authorize(['admin']), a
         res.json({ message: "Password updated successfully" });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/faculty/reset-password', authenticateToken, async (req, res) => {
+    const { email, newPassword } = req.body;
+
+    if (!email || !newPassword) {
+        return res.status(400).json({ error: "Email and New Password are required" });
+    }
+
+    if (req.user.email !== email) {
+        return res.status(403).json({ 
+            error: "Forbidden: You can only reset your own password." 
+        });
+    }
+
+    try {
+        const hash = await bcrypt.hash(newPassword, 10);
+
+        const result = await pool.query(
+            'UPDATE users SET password_hash = $1 WHERE email = $2 AND role = \'faculty\' RETURNING email',
+            [hash, email]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: "Faculty account not found" });
+        }
+
+        res.json({ success: true, message: "Your password has been updated successfully" });
+    } catch (err) {
+        console.error('Password Reset Error:', err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -1084,55 +1117,59 @@ app.get('/api/faculty/my-classes-full-timetables', authenticateToken, authorize(
 // BULK FACULTY PROFILE UPLOAD
 
 app.post('/api/admin/faculty-bulk-upload', authenticateToken, authorize(['admin']), async (req, res) => {
-    const { profiles } = req.body; // Array of {name, email, dept_id, auth_key}
+    const { faculty_data } = req.body; // Array of {name, email, dept_id, auth_key, password}
 
-    if (!Array.isArray(profiles) || profiles.length === 0) {
+    if (!Array.isArray(faculty_data) || faculty_data.length === 0) {
         return res.status(400).json({ error: "No profiles provided" });
     }
-
+console.log(!Array.isArray(faculty_data));
     const client = await pool.connect();
 
     try {
         await client.query('BEGIN');
+console.log(!Array.isArray(faculty_data));
+        for (const p of faculty_data) {
+            const { name, email, dept_id, auth_key, password } = p;
 
-        // Prepare bulk insert values
-        const values = [];
-        const params = [];
-        let paramIndex = 1;
+           console.log(password);
+            const passwordHash = await bcrypt.hash(password, 10);
 
-        profiles.forEach(p => {
-            values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`);
-            params.push(p.name, p.email, p.dept_id, p.auth_key);
-            paramIndex += 4;
-        });
-
-        const insertSql = `
-            INSERT INTO faculty_profiles (faculty_name, email, dept_id, authorization_key)
-            VALUES ${values.join(', ')}
-        `;
-
-        await client.query(insertSql, params);
+            const userInsertQuery = `
+                INSERT INTO users (email, password_hash, role) 
+                VALUES ($1, $2, 'faculty') 
+                RETURNING id
+            `;
+            const userRes = await client.query(userInsertQuery, [email, passwordHash]);
+            const newUserId = userRes.rows[0].id;
+            const profileInsertQuery = `
+                INSERT INTO faculty_profiles (faculty_name, email, dept_id, authorization_key, user_id)
+                VALUES ($1, $2, $3, $4, $5)
+            `;
+            await client.query(profileInsertQuery, [name, email, dept_id, auth_key, newUserId]);
+        }
 
         await client.query('COMMIT');
 
         res.json({
             success: true,
-            message: `${profiles.length} faculty profiles created successfully`
+            message: `${faculty_data.length} faculty profiles and user accounts created successfully`
         });
 
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Bulk Upload Error:', err);
 
+        if (err.code === '23505') {
+            return res.status(400).json({ error: "One or more email addresses already exist." });
+        }
+
         res.status(500).json({
-            error: err.message,
-            detail: err.detail || undefined
+            error: err.message
         });
     } finally {
         client.release();
     }
 });
-
 
 // OPTIMIZED BULK STUDENT UPLOAD
 
